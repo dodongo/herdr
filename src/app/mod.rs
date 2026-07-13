@@ -585,6 +585,7 @@ impl App {
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            auto_create_default_workspace: config.session.auto_create_default_workspace,
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,
@@ -1118,7 +1119,10 @@ impl App {
     }
 
     pub(crate) fn ensure_default_workspace(&mut self) -> bool {
-        if !self.state.workspaces.is_empty() || self.state.mode == Mode::Onboarding {
+        if !self.state.auto_create_default_workspace
+            || !self.state.workspaces.is_empty()
+            || self.state.mode == Mode::Onboarding
+        {
             return false;
         }
 
@@ -1331,6 +1335,10 @@ impl App {
                     );
                 }
             }
+        }
+
+        if !invalid_section("session") {
+            self.state.auto_create_default_workspace = config.session.auto_create_default_workspace;
         }
 
         if !invalid_section("ui") {
@@ -1739,6 +1747,15 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[test]
+    fn disabled_auto_create_default_workspace_keeps_workspace_list_empty() {
+        let mut app = test_app();
+        app.state.auto_create_default_workspace = false;
+
+        assert!(!app.ensure_default_workspace());
+        assert!(app.state.workspaces.is_empty());
     }
 
     fn unique_temp_path(name: &str) -> std::path::PathBuf {
