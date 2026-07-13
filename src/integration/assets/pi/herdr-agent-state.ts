@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=5
+// HERDR_INTEGRATION_VERSION=6
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -361,6 +361,10 @@ export default function (pi) {
   }
 
   pi.on("before_agent_start", (_event, ctx) => {
+    beginAgent(ctx);
+  });
+
+  pi.on("input", (_event, ctx) => {
     beginAgent(ctx);
   });
 
