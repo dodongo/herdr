@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=4
+// HERDR_INTEGRATION_VERSION=5
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -348,7 +348,7 @@ export default function (pi) {
     publishState(true);
   });
 
-  pi.on("agent_start", (_event, ctx) => {
+  function beginAgent(ctx: any) {
     if (!rootSession) {
       return;
     }
@@ -358,6 +358,14 @@ export default function (pi) {
     clearFailureState();
     agentActive = true;
     publishState();
+  }
+
+  pi.on("before_agent_start", (_event, ctx) => {
+    beginAgent(ctx);
+  });
+
+  pi.on("agent_start", (_event, ctx) => {
+    beginAgent(ctx);
   });
 
   pi.on("agent_end", (event) => {
@@ -371,14 +379,18 @@ export default function (pi) {
       return;
     }
 
-    agentActive = false;
-
     const retryableMessage = retryableErrorMessage(event);
     if (retryableMessage) {
+      agentActive = false;
       holdForRetry(retryableMessage);
+    }
+  });
+
+  pi.on("agent_settled", () => {
+    if (!rootSession) {
       return;
     }
-
+    agentActive = false;
     scheduleIdle();
   });
 
