@@ -624,18 +624,6 @@ impl AppState {
                         self.mode = Mode::Terminal;
                     }
 
-                    if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                        self.selection = None;
-                        self.selection_autoscroll = None;
-                        if let Some(ws_idx) = self.active {
-                            return Some(MouseAction::FocusPane {
-                                ws_idx,
-                                pane_id: info.id,
-                            });
-                        }
-                        return None;
-                    }
-
                     let (row, col) = (
                         mouse.row - info.inner_rect.y,
                         mouse.column - info.inner_rect.x,
@@ -822,6 +810,13 @@ impl AppState {
                     self.drag = None;
                     self.selection_autoscroll = None;
                     if was_click {
+                        if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned()
+                        {
+                            let mut down = mouse;
+                            down.kind = MouseEventKind::Down(MouseButton::Left);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, down);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, mouse);
+                        }
                         self.selection = None;
                     } else if !was_already_copied {
                         self.copy_selection(terminal_runtimes);

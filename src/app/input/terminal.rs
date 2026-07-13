@@ -717,15 +717,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn double_click_is_forwarded_when_mouse_reporting_is_enabled() {
+    async fn drag_selects_when_mouse_reporting_is_enabled() {
         let (mut app, info) = app_with_screen_bytes(b"\x1b[?1002halpha beta");
-        let col = info.inner_rect.x + 8;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
         let row = info.inner_rect.y;
-        double_click(&mut app, col, row);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
 
-        assert!(app.event_rx.try_recv().is_err());
-        assert!(app.state.selection.is_none());
-        assert!(app.selection_highlight_clear_deadline.is_none());
+        let selection = app.state.selection.as_ref().expect("selection after drag");
+        assert!(selection.is_visible());
+        assert_eq!(selection.ordered_cells(), ((0, 0), (0, 4)));
     }
 
     #[tokio::test]
