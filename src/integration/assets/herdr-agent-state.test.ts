@@ -39,8 +39,8 @@ afterEach(async () => {
 });
 
 const integrations = [
-  { name: "Pi", modulePath: "./pi/herdr-agent-state.ts" },
-  { name: "Oh My Pi", modulePath: "./omp/herdr-agent-state.ts" },
+  { name: "Pi", modulePath: "./pi/herdr-agent-state.ts", expectedReloadState: undefined },
+  { name: "Oh My Pi", modulePath: "./omp/herdr-agent-state.ts", expectedReloadState: "working" },
 ] as const;
 
 function importFresh(modulePath: string) {
@@ -49,7 +49,7 @@ function importFresh(modulePath: string) {
 }
 
 for (const integration of integrations) {
-  test(`${integration.name} reload preserves working state when the agent is active`, async () => {
+  test(`${integration.name} reload reports its expected state`, async () => {
     const recordingSocketPath = join(
       tmpdir(),
       `herdr-${integration.name.toLowerCase().replaceAll(" ", "-")}-${process.pid}.sock`,
@@ -125,11 +125,15 @@ for (const integration of integrations) {
     };
 
     const deadline = Date.now() + 1_000;
-    while (Date.now() < deadline && reportedState() === undefined) {
+    while (
+      integration.expectedReloadState !== undefined &&
+      Date.now() < deadline &&
+      reportedState() === undefined
+    ) {
       await Bun.sleep(5);
     }
 
-    expect(reportedState()).toBe("working");
+    expect(reportedState()).toBe(integration.expectedReloadState);
   });
 }
 

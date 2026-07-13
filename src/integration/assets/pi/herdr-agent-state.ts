@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=6
+// HERDR_INTEGRATION_VERSION=7
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -163,6 +163,18 @@ function releaseAgent(): Promise<void> {
       pane_id: paneId,
       source,
       agent: "pi",
+      seq: nextReportSeq(),
+    },
+  });
+}
+
+function clearAgentAuthority(): Promise<void> {
+  return sendRequest({
+    id: `${source}:clear:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    method: "pane.clear_agent_authority",
+    params: {
+      pane_id: paneId,
+      source,
       seq: nextReportSeq(),
     },
   });
@@ -336,16 +348,16 @@ export default function (pi) {
     publishState();
   });
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     if (ctx?.hasUI !== true) {
       return;
     }
     rootSession = true;
     updateSessionRef(ctx);
-    void reportSession();
-    // A reload can replace this extension mid-run without emitting another agent_start.
-    agentActive = ctx?.isIdle?.() === false;
-    publishState(true);
+    // Pi's visible working chrome is the reliable state source in terminal-hosted sessions.
+    // Clear an old hook state before restoring the session reference so it cannot mask it.
+    await clearAgentAuthority();
+    await reportSession();
   });
 
   function beginAgent(ctx: any) {
