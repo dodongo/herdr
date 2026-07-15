@@ -2490,6 +2490,7 @@ fn bundled_integration_assets_report_session_refs() {
     assert!(PI_EXTENSION_ASSET.contains("pane.report_agent_session"));
     assert!(PI_EXTENSION_ASSET.contains("pane.report_agent\""));
     assert!(PI_EXTENSION_ASSET.contains("pane.clear_agent_authority\""));
+    assert!(PI_EXTENSION_ASSET.contains("let requestQueue = Promise.resolve();"));
     assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_start\""));
     assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
     assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_settled\""));
@@ -2627,7 +2628,12 @@ fn pi_extension_refreshes_session_ref_before_agent_start_state() {
     let agent_start = PI_EXTENSION_ASSET
         .find("pi.on(\"agent_start\", (_event, ctx)")
         .expect("pi extension should receive agent_start context");
-    let handler = &PI_EXTENSION_ASSET[agent_start..];
+    let agent_start_handler = &PI_EXTENSION_ASSET[agent_start..];
+    assert!(agent_start_handler.contains("beginAgent(ctx);"));
+    let begin_agent = PI_EXTENSION_ASSET
+        .find("function beginAgent(ctx: any)")
+        .expect("pi extension should centralize agent activation");
+    let handler = &PI_EXTENSION_ASSET[begin_agent..];
     let update_session = handler
         .find("updateSessionRef(ctx);")
         .expect("pi extension should refresh the active session on agent_start");

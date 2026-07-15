@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=7
+// HERDR_INTEGRATION_VERSION=8
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -15,6 +15,8 @@ const source = "herdr:pi";
 function enabled() {
   return HERDR_ENV === "1" && !!socketPath && !!paneId;
 }
+
+let requestQueue = Promise.resolve();
 
 function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolean> {
   if (!enabled()) {
@@ -44,11 +46,19 @@ function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolea
   });
 }
 
-async function sendRequest(request: unknown): Promise<void> {
+async function sendRequestNow(request: unknown): Promise<void> {
   if (await sendRequestAttempt(request, 500)) {
     return;
   }
   await sendRequestAttempt(request, 1500);
+}
+
+function sendRequest(request: unknown): Promise<void> {
+  requestQueue = requestQueue.then(
+    () => sendRequestNow(request),
+    () => sendRequestNow(request),
+  );
+  return requestQueue;
 }
 
 type AgentState = "working" | "blocked" | "idle";
