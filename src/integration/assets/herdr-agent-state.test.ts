@@ -204,6 +204,13 @@ test("Pi retries working state after an unanswered socket attempt", async () => 
       },
     },
   );
+  handlers.get("input")?.({}, {
+    hasUI: true,
+    sessionManager: {
+      getSessionFile: () => undefined,
+      getSessionId: () => undefined,
+    },
+  });
 
   const reportedWorking = () =>
     deliveredRequests.some((request) => {
@@ -223,6 +230,84 @@ test("Pi retries working state after an unanswered socket attempt", async () => 
   expect(attemptedRequests.length).toBeGreaterThanOrEqual(2);
   expect(attemptedRequests[1]).toEqual(attemptedRequests[0]);
   expect(reportedWorking()).toBe(true);
+});
+
+test("Pi serializes session and state reports by sequence", async () => {
+  const recordingSocketPath = join(tmpdir(), `herdr-pi-order-${process.pid}.sock`);
+  socketPath = recordingSocketPath;
+  await rm(recordingSocketPath, { force: true });
+
+  const processedRequests: unknown[] = [];
+  const recordingServer = createServer((socket) => {
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline === -1) {
+        return;
+      }
+      const request = JSON.parse(input.slice(0, newline));
+      const delay = request.method === "pane.report_agent" ? 100 : 0;
+      setTimeout(() => {
+        processedRequests.push(request);
+        socket.end("{}\n");
+      }, delay);
+    });
+  });
+  server = recordingServer;
+  await new Promise<void>((resolve, reject) => {
+    recordingServer.once("error", reject);
+    recordingServer.listen(recordingSocketPath, resolve);
+  });
+
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = recordingSocketPath;
+  process.env.HERDR_PANE_ID = "test:p1";
+
+  type Handler = (event: unknown, context: unknown) => unknown;
+  const handlers = new Map<string, Handler>();
+  const pi = {
+    on(event: string, handler: Handler) {
+      handlers.set(event, handler);
+    },
+    events: {
+      on() {
+        return () => {};
+      },
+    },
+  };
+
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  const sessionStart = handlers.get("session_start");
+  expect(sessionStart).toBeDefined();
+  const context = {
+    hasUI: true,
+    sessionManager: {
+      getSessionFile: () => "/tmp/session.jsonl",
+      getSessionId: () => "session",
+    },
+  };
+  await sessionStart?.({ reason: "startup" }, context);
+  handlers.get("input")?.({}, context);
+  handlers.get("before_agent_start")?.({}, context);
+  handlers.get("agent_start")?.({}, context);
+
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline && processedRequests.length < 6) {
+    await Bun.sleep(5);
+  }
+
+  const sequences = processedRequests.map((request) => {
+    if (!isRecord(request) || !isRecord(request.params)) {
+      return undefined;
+    }
+    return request.params.seq;
+  });
+  expect(sequences.length).toBeGreaterThanOrEqual(6);
+  expect(sequences).toEqual([...sequences].sort((a, b) => Number(a) - Number(b)));
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
