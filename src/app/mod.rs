@@ -3311,6 +3311,32 @@ mod tests {
     }
 
     #[test]
+    fn hook_state_updates_mark_the_sidebar_dirty() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("hook-state")];
+        app.state.ensure_test_terminals();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.render_dirty.store(false, Ordering::Release);
+
+        app.handle_internal_event(crate::events::AppEvent::HookStateReported {
+            pane_id,
+            source: "test".into(),
+            agent_label: "pi".into(),
+            state: AgentState::Working,
+            message: None,
+            custom_status: None,
+            seq: Some(1),
+            session_ref: None,
+        });
+
+        assert!(app.render_dirty.load(Ordering::Acquire));
+        assert_eq!(
+            crate::ui::agent_panel_entries(&app.state)[0].state,
+            AgentState::Working
+        );
+    }
+
+    #[test]
     fn workspace_create_response_includes_initial_tab_and_root_pane() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("api-root-pane")];
