@@ -184,6 +184,38 @@ fn agent_panel_entries_with_runtimes(
         });
     }
 
+    let labels: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| {
+            Some((
+                entry.primary_tab_label.clone()?,
+                entry.public_pane_id.clone(),
+            ))
+        })
+        .collect();
+    for entry in &mut entries {
+        if entry.parent_pane_id.is_some() {
+            continue;
+        }
+        let Some(parent_label) = entry
+            .primary_tab_label
+            .as_deref()
+            .and_then(|label| label.strip_prefix("○ "))
+        else {
+            continue;
+        };
+        let mut matches = labels
+            .iter()
+            .filter(|(label, _)| label == parent_label)
+            .map(|(_, pane_id)| pane_id);
+        let Some(parent_id) = matches.next() else {
+            continue;
+        };
+        if matches.next().is_none() {
+            entry.parent_pane_id = Some(parent_id.clone());
+        }
+    }
+
     entries = order_agents_with_children(entries);
 
     entries
