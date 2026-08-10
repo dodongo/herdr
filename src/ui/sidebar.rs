@@ -21,6 +21,8 @@ pub(crate) struct AgentPanelEntry {
     pub ws_idx: usize,
     pub tab_idx: usize,
     pub pane_id: crate::layout::PaneId,
+    pub public_pane_id: String,
+    pub parent_pane_id: Option<String>,
     pub primary_label: String,
     pub primary_tab_label: Option<String>,
     pub agent_label: Option<String>,
@@ -125,18 +127,27 @@ fn agent_panel_entries_with_runtimes(
             let workspace_label = ws.display_name_from(&app.terminals, terminal_runtimes);
             ws.pane_details(&app.terminals)
                 .into_iter()
-                .map(move |detail| AgentPanelEntry {
-                    ws_idx,
-                    tab_idx: detail.tab_idx,
-                    pane_id: detail.pane_id,
-                    primary_label: workspace_label.clone(),
-                    primary_tab_label: multi_tab.then_some(detail.tab_label),
-                    agent_label: Some(detail.agent_label),
-                    state: detail.state,
-                    seen: detail.seen,
-                    last_agent_state_change_seq: detail.last_agent_state_change_seq,
-                    custom_status: detail.custom_status,
-                    state_labels: detail.state_labels,
+                .map(move |detail| {
+                    let public_pane_id = ws
+                        .public_pane_number(detail.pane_id)
+                        .map(|number| crate::workspace::public_pane_id_for_number(&ws.id, number))
+                        .unwrap_or_default();
+                    let parent_pane_id = detail.state_labels.get("p_parent_pane").cloned();
+                    AgentPanelEntry {
+                        ws_idx,
+                        tab_idx: detail.tab_idx,
+                        pane_id: detail.pane_id,
+                        public_pane_id,
+                        parent_pane_id,
+                        primary_label: workspace_label.clone(),
+                        primary_tab_label: multi_tab.then_some(detail.tab_label),
+                        agent_label: Some(detail.agent_label),
+                        state: detail.state,
+                        seen: detail.seen,
+                        last_agent_state_change_seq: detail.last_agent_state_change_seq,
+                        custom_status: detail.custom_status,
+                        state_labels: detail.state_labels,
+                    }
                 })
         })
         .collect();
@@ -150,7 +161,51 @@ fn agent_panel_entries_with_runtimes(
         });
     }
 
+    entries = order_agents_with_children(entries);
+
     entries
+}
+
+fn order_agents_with_children(entries: Vec<AgentPanelEntry>) -> Vec<AgentPanelEntry> {
+    let known: std::collections::HashSet<_> = entries
+        .iter()
+        .map(|entry| entry.public_pane_id.clone())
+        .collect();
+    let mut remaining = entries;
+    let mut ordered = Vec::with_capacity(remaining.len());
+    let mut index = 0;
+    while index < remaining.len() {
+        if remaining[index]
+            .parent_pane_id
+            .as_ref()
+            .is_some_and(|id| known.contains(id))
+        {
+            index += 1;
+            continue;
+        }
+        let root = remaining.remove(index);
+        append_agent_tree(root, &mut remaining, &mut ordered);
+    }
+    ordered.extend(remaining);
+    ordered
+}
+
+fn append_agent_tree(
+    entry: AgentPanelEntry,
+    remaining: &mut Vec<AgentPanelEntry>,
+    ordered: &mut Vec<AgentPanelEntry>,
+) {
+    let parent_id = entry.public_pane_id.clone();
+    ordered.push(entry);
+    let mut index = 0;
+    while index < remaining.len() {
+        if remaining[index].parent_pane_id.as_deref() == Some(parent_id.as_str()) {
+            let child = remaining.remove(index);
+            append_agent_tree(child, remaining, ordered);
+        } else {
+            index += 1;
+        }
+    }
 }
 
 pub(super) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static str {
@@ -1398,6 +1453,8 @@ mod tests {
             ws_idx: 0,
             tab_idx: 0,
             pane_id: crate::layout::PaneId::from_raw(1),
+            public_pane_id: "w1:p1".into(),
+            parent_pane_id: None,
             primary_label: "agent-browser".into(),
             primary_tab_label: Some("test-escalation".into()),
             agent_label: Some("claude".into()),
@@ -1411,6 +1468,39 @@ mod tests {
         let label = format_agent_panel_primary_label(&entry, 18);
 
         assert_eq!(label, "agent-bro… · test…");
+    }
+
+    #[test]
+    fn agent_panel_places_descendants_directly_after_their_parent() {
+        fn entry(id: &str, parent: Option<&str>) -> AgentPanelEntry {
+            AgentPanelEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id: crate::layout::PaneId::from_raw(1),
+                public_pane_id: id.into(),
+                parent_pane_id: parent.map(str::to_string),
+                primary_label: id.into(),
+                primary_tab_label: None,
+                agent_label: None,
+                state: AgentState::Working,
+                seen: true,
+                last_agent_state_change_seq: None,
+                custom_status: None,
+                state_labels: std::collections::HashMap::new(),
+            }
+        }
+
+        let ordered = order_agents_with_children(vec![
+            entry("other", None),
+            entry("grandchild", Some("child")),
+            entry("parent", None),
+            entry("child", Some("parent")),
+        ]);
+        let ids: Vec<_> = ordered
+            .iter()
+            .map(|entry| entry.public_pane_id.as_str())
+            .collect();
+        assert_eq!(ids, ["other", "parent", "child", "grandchild"]);
     }
 
     #[test]
