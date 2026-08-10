@@ -3584,7 +3584,6 @@ mod tests {
             agent_label: "pi".into(),
             state: AgentState::Working,
             message: None,
-            custom_status: None,
             seq: Some(1),
             session_ref: None,
         });

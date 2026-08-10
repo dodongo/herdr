@@ -162,6 +162,8 @@ mod tests {
             ws_idx: 0,
             tab_idx: 0,
             pane_id: crate::layout::PaneId::from_raw(1),
+            public_pane_id: "w1:p1".into(),
+            parent_pane_id: None,
             primary_label: "repo".into(),
             primary_tab_label: None,
             pane_label: None,
