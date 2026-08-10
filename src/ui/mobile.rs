@@ -1134,6 +1134,8 @@ mod tests {
             ws_idx: 0,
             tab_idx: 0,
             pane_id: PaneId::from_raw(1),
+            public_pane_id: "w1:p1".into(),
+            parent_pane_id: None,
             primary_label: "herdr".into(),
             primary_tab_label: primary_tab_label.map(str::to_string),
             pane_label: None,
