@@ -139,7 +139,14 @@ fn agent_panel_entries_with_runtimes(
                         .public_pane_number(detail.pane_id)
                         .map(|number| crate::workspace::public_pane_id_for_number(&ws.id, number))
                         .unwrap_or_default();
-                    let parent_pane_id = detail.tokens.get("p_parent_pane").cloned();
+                    let parent_pane_id =
+                        detail.tokens.get("p_parent_pane").cloned().or_else(|| {
+                            detail
+                                .state_labels
+                                .get("unknown")
+                                .and_then(|label| label.strip_prefix("parent-pane:"))
+                                .map(str::to_string)
+                        });
                     let show_tab = multi_tab
                         || ws
                             .tabs
