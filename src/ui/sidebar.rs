@@ -139,8 +139,9 @@ fn agent_panel_entries_with_runtimes(
                         .public_pane_number(detail.pane_id)
                         .map(|number| crate::workspace::public_pane_id_for_number(&ws.id, number))
                         .unwrap_or_default();
-                    let parent_pane_id =
-                        detail.tokens.get("p_parent_pane").cloned().or_else(|| {
+                    let parent_pane_id = parent_pane_id_from_tab_label(&detail.tab_label)
+                        .or_else(|| detail.tokens.get("p_parent_pane").cloned())
+                        .or_else(|| {
                             detail
                                 .state_labels
                                 .get("unknown")
@@ -219,6 +220,32 @@ fn agent_panel_entries_with_runtimes(
     entries = order_agents_with_children(entries);
 
     entries
+}
+
+fn parent_pane_id_from_tab_label(label: &str) -> Option<String> {
+    let selectors: Vec<u8> = label
+        .chars()
+        .rev()
+        .take_while(|character| ('\u{fe00}'..='\u{fe0f}').contains(character))
+        .map(|character| character as u8)
+        .collect();
+    if selectors.len() % 2 != 0 {
+        return None;
+    }
+    let nibbles: Vec<u8> = selectors
+        .into_iter()
+        .rev()
+        .map(|selector| selector)
+        .collect();
+    let bytes: Vec<u8> = nibbles
+        .chunks_exact(2)
+        .map(|pair| (pair[0] << 4) | pair[1])
+        .collect();
+    String::from_utf8(bytes)
+        .ok()?
+        .strip_prefix("p:")
+        .filter(|pane_id| !pane_id.is_empty())
+        .map(str::to_string)
 }
 
 fn order_agents_with_children(entries: Vec<AgentPanelEntry>) -> Vec<AgentPanelEntry> {
