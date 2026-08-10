@@ -23,10 +23,12 @@ use windows_sys::{
                     TH32CS_SNAPPROCESS,
                 },
             },
+            JobObjects::IsProcessInJob,
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
             Ole::CF_UNICODETEXT,
             Threading::{
-                GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_BASIC_INFORMATION,
+                GetCurrentProcess, GetExitCodeProcess, OpenProcess, TerminateProcess,
+                CREATE_NO_WINDOW, DETACHED_PROCESS, PROCESS_BASIC_INFORMATION,
                 PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
             },
         },
@@ -37,6 +39,10 @@ use windows_sys::{
 use super::{ClipboardImage, ForegroundJob, Signal};
 
 const STILL_ACTIVE: u32 = 259;
+
+pub(crate) fn should_draw_host_cursor_by_default() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowsProcessEntry {
@@ -123,10 +129,25 @@ fn scrollback_editor_argv_with_env(
     Ok(argv)
 }
 
-pub fn detach_server_daemon_command(_command: &mut std::process::Command) {}
+pub(crate) fn configure_background_command_platform(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+pub fn detach_server_daemon_command(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(DETACHED_PROCESS);
+}
 
 pub fn current_process_is_detached_server_daemon() -> bool {
-    false
+    if !unsafe { GetConsoleWindow() }.is_null() {
+        return false;
+    }
+
+    let mut in_job = 0;
+    unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) != 0 && in_job == 0 }
 }
 
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
@@ -644,6 +665,105 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    use windows_sys::Win32::System::Console::{
+        AllocConsole, FreeConsole, GetConsoleProcessList, GetConsoleWindow,
+    };
+
+    const CONSOLE_TEST_CHILD_ENV: &str = "HERDR_TEST_CONSOLE_CHILD_MODE";
+    const CONSOLE_TEST_PARENT_PID_ENV: &str = "HERDR_TEST_CONSOLE_PARENT_PID";
+
+    fn console_process_ids() -> Vec<u32> {
+        let mut process_ids = vec![0; 8];
+        loop {
+            let count = unsafe {
+                GetConsoleProcessList(process_ids.as_mut_ptr(), process_ids.len() as u32)
+            } as usize;
+            if count == 0 {
+                return Vec::new();
+            }
+            if count <= process_ids.len() {
+                process_ids.truncate(count);
+                return process_ids;
+            }
+            process_ids.resize(count, 0);
+        }
+    }
+
+    #[test]
+    fn windows_background_and_server_daemon_commands_do_not_have_consoles() {
+        if let Some(mode) = std::env::var_os(CONSOLE_TEST_CHILD_ENV) {
+            assert!(
+                unsafe { GetConsoleWindow() }.is_null(),
+                "{} child opened or inherited a console window",
+                mode.to_string_lossy()
+            );
+            let parent_pid = std::env::var(CONSOLE_TEST_PARENT_PID_ENV)
+                .expect("console test parent pid")
+                .parse::<u32>()
+                .expect("numeric console test parent pid");
+            assert!(
+                !console_process_ids().contains(&parent_pid),
+                "{} child inherited the parent console",
+                mode.to_string_lossy()
+            );
+            return;
+        }
+
+        let allocated_console = if console_process_ids().is_empty() {
+            assert_ne!(unsafe { AllocConsole() }, 0, "allocate test console");
+            true
+        } else {
+            false
+        };
+
+        let parent_pid = std::process::id().to_string();
+        let test_exe = std::env::current_exe().expect("resolve test executable");
+        let configurations: [(&str, fn(&mut Command)); 2] = [
+            ("background", super::configure_background_command_platform),
+            ("server daemon", super::detach_server_daemon_command),
+        ];
+        for (mode, configure) in configurations {
+            let mut child = Command::new(&test_exe);
+            child
+                .arg("windows_background_and_server_daemon_commands_do_not_have_consoles")
+                .env(CONSOLE_TEST_CHILD_ENV, mode)
+                .env(CONSOLE_TEST_PARENT_PID_ENV, &parent_pid)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure(&mut child);
+
+            let status = child.status().expect("spawn console isolation test child");
+            assert!(
+                status.success(),
+                "{mode} child opened or inherited a console"
+            );
+        }
+
+        let command = format!(
+            r#""{}" windows_background_and_server_daemon_commands_do_not_have_consoles"#,
+            test_exe.display()
+        );
+        let status = crate::platform::detached_custom_command_process(&command)
+            .env(CONSOLE_TEST_CHILD_ENV, "detached custom command descendant")
+            .env(CONSOLE_TEST_PARENT_PID_ENV, &parent_pid)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn detached custom command test child");
+        assert!(
+            status.success(),
+            "detached custom command descendant opened or inherited a console"
+        );
+
+        if allocated_console {
+            unsafe {
+                FreeConsole();
+            }
+        }
+    }
 
     fn argv_strings(argv: &[std::ffi::OsString]) -> Vec<String> {
         argv.into_iter()
