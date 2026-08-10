@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=8
+// HERDR_INTEGRATION_VERSION=5
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -15,8 +15,6 @@ const source = "herdr:pi";
 function enabled() {
   return HERDR_ENV === "1" && !!socketPath && !!paneId;
 }
-
-let requestQueue = Promise.resolve();
 
 function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolean> {
   if (!enabled()) {
@@ -46,19 +44,11 @@ function sendRequestAttempt(request: unknown, timeoutMs: number): Promise<boolea
   });
 }
 
-async function sendRequestNow(request: unknown): Promise<void> {
+async function sendRequest(request: unknown): Promise<void> {
   if (await sendRequestAttempt(request, 500)) {
     return;
   }
   await sendRequestAttempt(request, 1500);
-}
-
-function sendRequest(request: unknown): Promise<void> {
-  requestQueue = requestQueue.then(
-    () => sendRequestNow(request),
-    () => sendRequestNow(request),
-  );
-  return requestQueue;
 }
 
 type AgentState = "working" | "blocked" | "idle";
@@ -131,7 +121,7 @@ function currentSessionRef(): Record<string, unknown> | undefined {
   return undefined;
 }
 
-function reportSession(): Promise<void> {
+function reportSession(sessionStartSource?: string): Promise<void> {
   const sessionRef = currentSessionRef();
   if (!sessionRef) {
     return Promise.resolve();
@@ -145,6 +135,7 @@ function reportSession(): Promise<void> {
       source,
       agent: "pi",
       seq: nextReportSeq(),
+      session_start_source: sessionStartSource,
       ...sessionRef,
     },
   });
@@ -173,18 +164,6 @@ function releaseAgent(): Promise<void> {
       pane_id: paneId,
       source,
       agent: "pi",
-      seq: nextReportSeq(),
-    },
-  });
-}
-
-function clearAgentAuthority(): Promise<void> {
-  return sendRequest({
-    id: `${source}:clear:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-    method: "pane.clear_agent_authority",
-    params: {
-      pane_id: paneId,
-      source,
       seq: nextReportSeq(),
     },
   });
@@ -358,19 +337,19 @@ export default function (pi) {
     publishState();
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     if (ctx?.hasUI !== true) {
       return;
     }
     rootSession = true;
     updateSessionRef(ctx);
-    // Pi's visible working chrome is the reliable state source in terminal-hosted sessions.
-    // Clear an old hook state before restoring the session reference so it cannot mask it.
-    await clearAgentAuthority();
-    await reportSession();
+    await reportSession(event?.reason);
+    // A reload can replace this extension mid-run without emitting another agent_start.
+    agentActive = ctx?.isIdle?.() === false;
+    publishState(true);
   });
 
-  function beginAgent(ctx: any) {
+  pi.on("agent_start", (_event, ctx) => {
     if (!rootSession) {
       return;
     }
@@ -380,18 +359,6 @@ export default function (pi) {
     clearFailureState();
     agentActive = true;
     publishState();
-  }
-
-  pi.on("before_agent_start", (_event, ctx) => {
-    beginAgent(ctx);
-  });
-
-  pi.on("input", (_event, ctx) => {
-    beginAgent(ctx);
-  });
-
-  pi.on("agent_start", (_event, ctx) => {
-    beginAgent(ctx);
   });
 
   pi.on("agent_end", (event) => {
@@ -405,18 +372,14 @@ export default function (pi) {
       return;
     }
 
+    agentActive = false;
+
     const retryableMessage = retryableErrorMessage(event);
     if (retryableMessage) {
-      agentActive = false;
       holdForRetry(retryableMessage);
-    }
-  });
-
-  pi.on("agent_settled", () => {
-    if (!rootSession) {
       return;
     }
-    agentActive = false;
+
     scheduleIdle();
   });
 
