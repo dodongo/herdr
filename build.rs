@@ -3,16 +3,22 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn zig_target(target: &str) -> &str {
+fn zig_target(target: &str) -> String {
+    // Darwin targets pin a minimum OS version: zig's "native" macOS target
+    // uses the host version, and a host newer than zig's bundled libSystem
+    // stubs (for example macOS 26 with zig 0.15) fails to link with
+    // undefined availability symbols. MACOSX_DEPLOYMENT_TARGET overrides.
+    let darwin_floor =
+        env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "13.0".to_string());
     match target {
-        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
-        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu",
-        "x86_64-unknown-linux-musl" => "x86_64-linux-musl",
-        "aarch64-unknown-linux-musl" => "aarch64-linux-musl",
-        "x86_64-apple-darwin" => "x86_64-macos",
-        "aarch64-apple-darwin" => "aarch64-macos",
-        "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
-        "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
+        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu".to_string(),
+        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu".to_string(),
+        "x86_64-unknown-linux-musl" => "x86_64-linux-musl".to_string(),
+        "aarch64-unknown-linux-musl" => "aarch64-linux-musl".to_string(),
+        "x86_64-apple-darwin" => format!("x86_64-macos.{darwin_floor}"),
+        "aarch64-apple-darwin" => format!("aarch64-macos.{darwin_floor}"),
+        "x86_64-pc-windows-msvc" => "x86_64-windows-msvc".to_string(),
+        "aarch64-pc-windows-msvc" => "aarch64-windows-msvc".to_string(),
         other => panic!("unsupported target for libghostty-vt build: {other}"),
     }
 }
