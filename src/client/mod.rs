@@ -51,6 +51,12 @@ static RECEIVED_KITTY_GRAPHICS_IDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::ne
 // Client state
 // ---------------------------------------------------------------------------
 
+/// Substring of the server's live-update shutdown reason; seeing it means the
+/// replacement server will accept this client again shortly.
+const HANDOFF_RECONNECT_PHRASE: &str = "reconnect after handoff completes";
+const HANDOFF_RECONNECT_WINDOW: Duration = Duration::from_secs(120);
+
+#[derive(Clone)]
 struct ClientLoopConfig {
     sound_config: crate::config::SoundConfig,
     mouse_scroll_lines: usize,
@@ -1137,128 +1143,182 @@ fn run_client_with_mode(
     crate::logging::startup("client");
     info!(path = %socket_path.display(), "{log_message}");
 
-    // Try to connect to the server.
-    let mut stream = match crate::ipc::connect_local_stream(&socket_path) {
-        Ok(s) => s,
-        Err(err) => {
-            // Server unreachable — show clear error and exit.
-            let client_err = ClientError::ConnectionFailed(err);
-            eprintln!("herdr: {client_err}");
-            std::process::exit(1);
-        }
-    };
-
-    // Get the terminal geometry before handshake (before raw mode).
-    let (cols, rows, cell_width_px, cell_height_px) =
-        current_terminal_geometry(kitty_graphics_enabled);
-
-    // Perform handshake while the stream is still in blocking mode.
-    let negotiated_encoding = match do_handshake(
-        &mut stream,
-        cols,
-        rows,
-        cell_width_px,
-        cell_height_px,
-        requested_encoding,
-        direct_attach_requested,
-    ) {
-        Ok(encoding) => encoding,
-        Err(err) => {
-            eprintln!("herdr: {err}");
-            std::process::exit(1);
-        }
-    };
-
-    if let Some((terminal_id, takeover)) = attach_request {
-        let attach = ClientMessage::AttachTerminal {
-            terminal_id,
-            takeover,
-        };
-        if let Err(err) = write_to_server(&mut stream, &attach) {
-            eprintln!("herdr: failed to request terminal attach: {err}");
-            std::process::exit(1);
-        }
-    }
-
-    // Now set up the terminal. This must happen AFTER the handshake succeeds,
-    // so we don't leave the terminal in raw mode if the server rejects us.
-    let direct_attach = attach_escape.is_some();
-    let terminal_guard = if direct_attach {
-        setup_direct_attach_terminal()
-    } else {
-        setup_terminal(mouse_capture)
-    }
-    .map_err(|err| {
-        eprintln!("herdr: failed to set up terminal: {err}");
-        err
-    })?;
-
-    // Install a panic hook to restore the terminal on panic (same as monolithic).
-    let panic_resets_modify_other_keys = terminal_guard.reset_modify_other_keys;
-    let panic_resets_host_color_scheme_reports = terminal_guard.reset_host_color_scheme_reports;
-    #[cfg(windows)]
-    let panic_restore_windows_input_mode = terminal_guard.restore_windows_input_mode;
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        restore_terminal_state(
-            panic_resets_modify_other_keys,
-            panic_resets_host_color_scheme_reports,
-            #[cfg(windows)]
-            panic_restore_windows_input_mode,
-        );
-        original_hook(info);
-    }));
-
-    // Create the tokio runtime.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(io::Error::other)?;
-
     let should_quit = Arc::new(AtomicBool::new(false));
 
-    // Install Ctrl+C handler.
+    // Install Ctrl+C handler once; reconnect attempts reuse the same flag.
     let quit_flag = should_quit.clone();
     let _ = ctrlc::set_handler(move || {
         quit_flag.store(true, Ordering::Release);
     });
 
-    let result = rt.block_on(async {
-        run_client_loop(
-            stream,
+    // A live-update handoff shuts the server down and asks clients to
+    // reconnect once the replacement is listening. Only the plain session
+    // client retries: direct terminal attaches carry one-shot state.
+    let handoff_retry_allowed = attach_request.is_none() && attach_escape.is_none();
+    let mut attach_request = attach_request;
+    let mut attach_escape = attach_escape;
+    let mut handoff_deadline: Option<std::time::Instant> = None;
+
+    loop {
+        // Try to connect to the server.
+        let mut stream = match crate::ipc::connect_local_stream(&socket_path) {
+            Ok(s) => s,
+            Err(err) => {
+                if let Some(deadline) = handoff_deadline {
+                    if std::time::Instant::now() < deadline
+                        && !should_quit.load(Ordering::Acquire)
+                    {
+                        std::thread::sleep(Duration::from_millis(250));
+                        continue;
+                    }
+                }
+                // Server unreachable — show clear error and exit.
+                let client_err = ClientError::ConnectionFailed(err);
+                eprintln!("herdr: {client_err}");
+                std::process::exit(1);
+            }
+        };
+
+        // Get the terminal geometry before handshake (before raw mode).
+        let (cols, rows, cell_width_px, cell_height_px) =
+            current_terminal_geometry(kitty_graphics_enabled);
+
+        // Perform handshake while the stream is still in blocking mode.
+        let negotiated_encoding = match do_handshake(
+            &mut stream,
             cols,
             rows,
-            should_quit,
-            loop_config,
-            negotiated_encoding,
-            attach_escape,
-        )
-        .await
-    });
-
-    // Restore the terminal before printing any final status message.
-    drop(terminal_guard);
-
-    if let Err(err) = result {
-        eprintln!("herdr: {err}");
-        rt.shutdown_timeout(Duration::from_millis(100));
-        crate::logging::shutdown("client");
-
-        if matches!(
-            err,
-            ClientError::ServerShutdown {
-                reason: Some(reason)
-            } if reason == "detached"
+            cell_width_px,
+            cell_height_px,
+            requested_encoding,
+            direct_attach_requested,
         ) {
-            return Ok(());
+            Ok(encoding) => encoding,
+            Err(err) => {
+                if handoff_retry_allowed && err.to_string().contains(HANDOFF_RECONNECT_PHRASE) {
+                    if handoff_deadline.is_none() {
+                        eprintln!("herdr: live update in progress; reconnecting...");
+                        handoff_deadline =
+                            Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
+                    }
+                    if std::time::Instant::now() < handoff_deadline.unwrap()
+                        && !should_quit.load(Ordering::Acquire)
+                    {
+                        std::thread::sleep(Duration::from_millis(250));
+                        continue;
+                    }
+                }
+                eprintln!("herdr: {err}");
+                std::process::exit(1);
+            }
+        };
+        // A successful handshake ends any handoff window, so a much later
+        // connection loss fails fast instead of silently retrying. The lint
+        // cannot see the cross-iteration reads of the reassignment paths.
+        #[allow(unused_assignments)]
+        {
+            handoff_deadline = None;
         }
 
-        std::process::exit(1);
-    }
+        if let Some((terminal_id, takeover)) = attach_request.take() {
+            let attach = ClientMessage::AttachTerminal {
+                terminal_id,
+                takeover,
+            };
+            if let Err(err) = write_to_server(&mut stream, &attach) {
+                eprintln!("herdr: failed to request terminal attach: {err}");
+                std::process::exit(1);
+            }
+        }
 
-    rt.shutdown_timeout(Duration::from_millis(100));
-    crate::logging::shutdown("client");
-    Ok(())
+        // Now set up the terminal. This must happen AFTER the handshake succeeds,
+        // so we don't leave the terminal in raw mode if the server rejects us.
+        let direct_attach = attach_escape.is_some();
+        let terminal_guard = if direct_attach {
+            setup_direct_attach_terminal()
+        } else {
+            setup_terminal(mouse_capture)
+        }
+        .map_err(|err| {
+            eprintln!("herdr: failed to set up terminal: {err}");
+            err
+        })?;
+
+        // Install a panic hook to restore the terminal on panic (same as monolithic).
+        let panic_resets_modify_other_keys = terminal_guard.reset_modify_other_keys;
+        let panic_resets_host_color_scheme_reports =
+            terminal_guard.reset_host_color_scheme_reports;
+        #[cfg(windows)]
+        let panic_restore_windows_input_mode = terminal_guard.restore_windows_input_mode;
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore_terminal_state(
+                panic_resets_modify_other_keys,
+                panic_resets_host_color_scheme_reports,
+                #[cfg(windows)]
+                panic_restore_windows_input_mode,
+            );
+            original_hook(info);
+        }));
+
+        // Create the tokio runtime.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(io::Error::other)?;
+
+        let result = rt.block_on(async {
+            run_client_loop(
+                stream,
+                cols,
+                rows,
+                should_quit.clone(),
+                loop_config.clone(),
+                negotiated_encoding,
+                attach_escape.take(),
+            )
+            .await
+        });
+
+        // Restore the terminal before printing any final status message.
+        drop(terminal_guard);
+
+        if let Err(err) = result {
+            rt.shutdown_timeout(Duration::from_millis(100));
+
+            if handoff_retry_allowed
+                && matches!(
+                    &err,
+                    ClientError::ServerShutdown { reason: Some(reason) }
+                        if reason.contains(HANDOFF_RECONNECT_PHRASE)
+                )
+                && !should_quit.load(Ordering::Acquire)
+            {
+                eprintln!("herdr: live update in progress; reconnecting...");
+                handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
+                std::thread::sleep(Duration::from_millis(500));
+                continue;
+            }
+
+            eprintln!("herdr: {err}");
+            crate::logging::shutdown("client");
+
+            if matches!(
+                err,
+                ClientError::ServerShutdown {
+                    reason: Some(reason)
+                } if reason == "detached"
+            ) {
+                return Ok(());
+            }
+
+            std::process::exit(1);
+        }
+
+        rt.shutdown_timeout(Duration::from_millis(100));
+        crate::logging::shutdown("client");
+        return Ok(());
+    }
 }
 
 /// The main client event loop.
