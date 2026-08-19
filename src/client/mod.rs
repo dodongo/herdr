@@ -56,6 +56,22 @@ static RECEIVED_KITTY_GRAPHICS_IDS: OnceLock<Mutex<HashSet<u32>>> = OnceLock::ne
 /// replacement server will accept this client again shortly.
 const HANDOFF_RECONNECT_PHRASE: &str = "reconnect after handoff completes";
 const HANDOFF_RECONNECT_WINDOW: Duration = Duration::from_secs(120);
+/// Set on the re-exec'd client so its startup connect/handshake retries until
+/// the replacement server listens, instead of failing fast.
+const HANDOFF_RECONNECT_ENV: &str = "HERDR_HANDOFF_RECONNECT";
+
+/// Replace this process with the freshly installed binary so the client picks
+/// up new code after a live update. Same PID, so the hosting terminal (for
+/// example a Zed pane) never sees its child exit. Returns only on failure.
+#[cfg(unix)]
+fn reexec_for_handoff() -> io::Error {
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("herdr"));
+    std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env(HANDOFF_RECONNECT_ENV, "1")
+        .exec()
+}
 
 #[derive(Clone)]
 struct ClientLoopConfig {
@@ -1169,7 +1185,16 @@ fn run_client_with_mode(
     let handoff_retry_allowed = attach_request.is_none() && attach_escape.is_none();
     let mut attach_request = attach_request;
     let mut attach_escape = attach_escape;
-    let mut handoff_deadline: Option<std::time::Instant> = None;
+    // A re-exec'd client inherits the handoff window: the replacement server
+    // may not be listening yet, so startup retries instead of failing fast.
+    let mut handoff_deadline: Option<std::time::Instant> =
+        if handoff_retry_allowed && std::env::var_os(HANDOFF_RECONNECT_ENV).is_some() {
+            std::env::remove_var(HANDOFF_RECONNECT_ENV);
+            eprintln!("herdr: live update in progress; reconnecting...");
+            Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW)
+        } else {
+            None
+        };
 
     loop {
         // Try to connect to the server.
@@ -1308,6 +1333,15 @@ fn run_client_with_mode(
                 )
                 && !should_quit.load(Ordering::Acquire)
             {
+                // Prefer replacing this process with the freshly installed
+                // binary so the client runs post-update code; fall back to an
+                // in-process reconnect only if the exec itself fails.
+                #[cfg(unix)]
+                {
+                    crate::logging::shutdown("client");
+                    let err = reexec_for_handoff();
+                    eprintln!("herdr: re-exec after live update failed ({err}); reconnecting in place...");
+                }
                 eprintln!("herdr: live update in progress; reconnecting...");
                 handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
                 std::thread::sleep(Duration::from_millis(500));
