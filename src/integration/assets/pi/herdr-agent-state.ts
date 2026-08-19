@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=5
+// HERDR_INTEGRATION_VERSION=6
 // @ts-nocheck
 
 import { createConnection } from "node:net";
@@ -11,6 +11,10 @@ const HERDR_ENV = process.env.HERDR_ENV;
 const socketPath = process.env.HERDR_SOCKET_PATH;
 const paneId = process.env.HERDR_PANE_ID;
 const source = "herdr:pi";
+// P subagent panes carry the muted droid lifecycle identity so they never
+// emit completion or attention sounds, while their agent session stays
+// reported as pi so session discovery keeps working.
+const lifecycleAgent = process.env.PI_SUBAGENT === "1" ? "droid" : "pi";
 
 function enabled() {
   return HERDR_ENV === "1" && !!socketPath && !!paneId;
@@ -148,7 +152,7 @@ function sendState(state: AgentState, message?: string, seq = nextReportSeq()): 
     params: withSessionRef({
       pane_id: paneId,
       source,
-      agent: "pi",
+      agent: lifecycleAgent,
       state,
       message,
       seq,
@@ -163,7 +167,7 @@ function releaseAgent(): Promise<void> {
     params: {
       pane_id: paneId,
       source,
-      agent: "pi",
+      agent: lifecycleAgent,
       seq: nextReportSeq(),
     },
   });
