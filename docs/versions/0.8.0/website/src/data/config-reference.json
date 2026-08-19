@@ -1038,6 +1038,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Resume supported AI-agent panes into their native conversation sessions when restoring a Herdr session."
+        },
+        {
+          "key": "session.auto_create_default_workspace",
+          "type": "boolean",
+          "default": "true",
+          "description": "Create a workspace automatically when an attached client has none."
         }
       ]
     },

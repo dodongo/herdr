@@ -1390,6 +1390,11 @@ impl GhosttyPaneTerminal {
         let in_progress_default_color_event = core.default_color_event_tracker.in_progress_event();
         let default_color_events = core.default_color_event_tracker.drain_pending();
         let xtgettcap_responses = core.xtgettcap_query_tracker.drain_pending();
+        let viewport_row = core.terminal.scrollbar().ok().and_then(|scrollbar| {
+            let max_offset = scrollbar.total.saturating_sub(scrollbar.len);
+            let offset = max_offset.saturating_sub(scrollbar.offset);
+            (offset > 0).then_some(max_offset - offset)
+        });
         let write_started = crate::render_prof::timer();
         self.write_pty_bytes_with_ordered_responses(
             &mut core,
@@ -1401,6 +1406,15 @@ impl GhosttyPaneTerminal {
         );
         let terminal_bells = core.terminal.take_bell_count();
         let clipboard_writes = core.terminal.take_clipboard_writes();
+        if let Some(viewport_row) = viewport_row {
+            if let Ok(scrollbar) = core.terminal.scrollbar() {
+                let max_offset = scrollbar.total.saturating_sub(scrollbar.len);
+                ghostty_set_scroll_offset_from_bottom(
+                    &mut core.terminal,
+                    max_offset.saturating_sub(viewport_row),
+                );
+            }
+        }
         let reported_cwd = core
             .terminal
             .take_pwd_changes()
@@ -5276,6 +5290,28 @@ mod tests {
             assert_eq!(metrics.offset_from_bottom, 0);
             assert!(pane.visible_text().contains("000004"));
         }
+    }
+
+    #[test]
+    fn pty_output_keeps_a_scrolled_viewport_anchored() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(10, 3, 100).unwrap();
+        write_numbered_lines(&mut terminal, 10);
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+
+        pane.set_scroll_offset_from_bottom(4);
+        let visible_before = pane.visible_text();
+        let metrics_before = pane.scroll_metrics().expect("metrics before output");
+        pane.process_pty_bytes(pane_id, 0, b"\\r\\n000010\\r\\n000011", &tx);
+
+        let metrics_after = pane.scroll_metrics().expect("metrics after output");
+        assert_eq!(pane.visible_text(), visible_before);
+        assert_eq!(
+            metrics_after.offset_from_bottom,
+            metrics_before.offset_from_bottom + metrics_after.max_offset_from_bottom
+                - metrics_before.max_offset_from_bottom
+        );
     }
 
     #[test]
