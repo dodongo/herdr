@@ -620,6 +620,7 @@ impl App {
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            auto_create_default_workspace: config.session.auto_create_default_workspace,
             prefix_code,
             prefix_mods,
             headless_size: config.headless_size(),
@@ -1229,7 +1230,8 @@ impl App {
     }
 
     pub(crate) fn ensure_default_workspace(&mut self) -> bool {
-        if !self.state.workspaces.is_empty()
+        if !self.state.auto_create_default_workspace
+            || !self.state.workspaces.is_empty()
             || self.state.mode == Mode::Onboarding
             || self.state.pending_workspace_create_cwd.is_some()
         {
@@ -1445,6 +1447,10 @@ impl App {
                     );
                 }
             }
+        }
+
+        if !invalid_section("session") {
+            self.state.auto_create_default_workspace = config.session.auto_create_default_workspace;
         }
 
         if !invalid_section("ui") {
@@ -2094,6 +2100,15 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[test]
+    fn disabled_auto_create_default_workspace_keeps_workspace_list_empty() {
+        let mut app = test_app();
+        app.state.auto_create_default_workspace = false;
+
+        assert!(!app.ensure_default_workspace());
+        assert!(app.state.workspaces.is_empty());
     }
 
     fn unique_temp_path(name: &str) -> std::path::PathBuf {
@@ -4050,6 +4065,31 @@ mod tests {
         assert!(crate::api::request_changes_ui(&pane_focus_direction));
         assert!(crate::api::request_changes_ui(&pane_resize));
         assert!(crate::api::request_changes_ui(&agent_view));
+    }
+
+    #[test]
+    fn hook_state_updates_mark_the_sidebar_dirty() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("hook-state")];
+        app.state.ensure_test_terminals();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.render_dirty.take();
+
+        app.handle_internal_event(crate::events::AppEvent::HookStateReported {
+            pane_id,
+            source: "test".into(),
+            agent_label: "p".into(),
+            state: AgentState::Working,
+            message: None,
+            seq: Some(1),
+            session_ref: None,
+        });
+
+        assert!(app.render_dirty.is_pending());
+        assert_eq!(
+            crate::ui::agent_panel_entries(&app.state)[0].state,
+            AgentState::Working
+        );
     }
 
     #[test]

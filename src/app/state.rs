@@ -1449,6 +1449,7 @@ pub struct AppState {
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
     // Config
+    pub auto_create_default_workspace: bool,
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
     /// Virtual terminal size (columns, rows) used when no client is attached.
@@ -1842,6 +1843,7 @@ impl AppState {
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            auto_create_default_workspace: true,
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             headless_size: (

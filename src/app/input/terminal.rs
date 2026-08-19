@@ -1258,58 +1258,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copy_on_select_disabled_still_forwards_mouse_reporting_gestures() {
-        let mut app = app_for_mouse_test();
-        let mut ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
-        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
-        let info = pane_infos[0].clone();
-        let (runtime, mut input_rx) =
-            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-                info.inner_rect.width,
-                info.inner_rect.height,
-                0,
-                b"\x1b[?1002h\x1b[?1006h",
-                4,
-            );
-        ws.insert_test_runtime(pane_id, runtime);
-        app.state.workspaces = vec![ws];
-        app.state.active = Some(0);
-        app.state.selected = 0;
-        app.state.mode = Mode::Terminal;
-        app.state.view.pane_infos = pane_infos;
-        app.state.copy_on_select = false;
-
-        let col = info.inner_rect.x + 2;
-        let row = info.inner_rect.y + 3;
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+    async fn drag_selects_when_mouse_reporting_is_enabled() {
+        let (mut app, info) = app_with_screen_bytes(b"\x1b[?1002halpha beta");
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+        let row = info.inner_rect.y;
         app.handle_mouse(mouse(
-            MouseEventKind::Drag(MouseButton::Left),
-            col + 1,
-            row + 1,
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
         ));
-        app.handle_mouse(mouse(
-            MouseEventKind::Up(MouseButton::Left),
-            col + 1,
-            row + 1,
-        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
 
-        assert!(app.event_rx.try_recv().is_err());
-        assert!(app.state.selection.is_none());
-        assert!(app.selection_highlight_clear_deadline.is_none());
-        assert_eq!(
-            input_rx.try_recv().expect("forwarded left mouse down"),
-            Bytes::from_static(b"\x1b[<0;3;4M")
-        );
-        assert_eq!(
-            input_rx.try_recv().expect("forwarded left mouse drag"),
-            Bytes::from_static(b"\x1b[<32;4;5M")
-        );
-        assert_eq!(
-            input_rx.try_recv().expect("forwarded left mouse up"),
-            Bytes::from_static(b"\x1b[<0;4;5m")
-        );
-        assert!(input_rx.try_recv().is_err());
+        let selection = app.state.selection.as_ref().expect("selection after drag");
+        assert!(selection.is_visible());
+        assert_eq!(selection.ordered_cells(), ((0, 0), (0, 4)));
     }
 
     #[tokio::test]

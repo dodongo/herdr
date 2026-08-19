@@ -637,12 +637,6 @@ impl AppState {
                         self.mode = Mode::Terminal;
                     }
 
-                    if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                        self.selection = None;
-                        self.selection_autoscroll = None;
-                        return self.mouse_pane_focus_action(info.id);
-                    }
-
                     let (row, col) = (
                         mouse.row - info.inner_rect.y,
                         mouse.column - info.inner_rect.x,
@@ -840,6 +834,13 @@ impl AppState {
                     self.drag = None;
                     self.selection_autoscroll = None;
                     if was_click {
+                        if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned()
+                        {
+                            let mut down = mouse;
+                            down.kind = MouseEventKind::Down(MouseButton::Left);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, down);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, mouse);
+                        }
                         self.selection = None;
                     } else if was_finalized {
                         // Double-click already finalized this word selection.
@@ -1787,6 +1788,12 @@ impl AppState {
         else {
             return false;
         };
+        if rt
+            .scroll_metrics()
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0)
+        {
+            return false;
+        }
         let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
             return false;
         };
@@ -2746,6 +2753,9 @@ mod tests {
             );
         app.state.insert_test_runtime(target, runtime);
 
+        // P customization: a left press focuses the pane and starts a host
+        // selection; the press/release pair reaches the application only when
+        // the release turns out to be a plain click.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             info.inner_rect.x + 1,
@@ -2753,9 +2763,21 @@ mod tests {
         ));
 
         assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(target));
+        assert!(input_rx.try_recv().is_err());
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
         assert_eq!(
             input_rx.try_recv().expect("forwarded captured left press"),
             Bytes::from_static(b"\x1b[<0;2;2M")
+        );
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded captured left release"),
+            Bytes::from_static(b"\x1b[<0;2;2m")
         );
     }
 

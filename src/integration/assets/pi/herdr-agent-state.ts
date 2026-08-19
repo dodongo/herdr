@@ -2,10 +2,11 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=8
+// HERDR_INTEGRATION_VERSION=11
 // @ts-nocheck
 
 import net from "node:net";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const HERDR_ENV = process.env.HERDR_ENV;
 const socketPath = process.env.HERDR_SOCKET_PATH;
@@ -13,6 +14,12 @@ const socketEndpoint =
   process.platform === "win32" && socketPath ? `\\\\.\\pipe\\${socketPath}` : socketPath;
 const paneId = process.env.HERDR_PANE_ID;
 const source = "herdr:pi";
+// Subagent panes carry Herdr's muted droid lifecycle identity so they never
+// emit completion or attention sounds, while their agent session stays
+// reported as pi so session discovery (subagent startup waits) keeps working.
+const agent = "pi";
+const lifecycleAgent = process.env.PI_SUBAGENT === "1" ? "droid" : "pi";
+const activeHeartbeatMs = 10_000;
 
 function enabled() {
   return HERDR_ENV === "1" && !!socketPath && !!paneId;
@@ -119,7 +126,7 @@ function reportSession(sessionStartSource?: string): Promise<void> {
     params: {
       pane_id: paneId,
       source,
-      agent: "pi",
+      agent,
       seq: nextReportSeq(),
       session_start_source: sessionStartSource,
       ...sessionRef,
@@ -134,7 +141,7 @@ function sendState(state: AgentState, message?: string, seq = nextReportSeq()): 
     params: withSessionRef({
       pane_id: paneId,
       source,
-      agent: "pi",
+      agent: lifecycleAgent,
       state,
       message,
       seq,
@@ -172,7 +179,7 @@ async function drainStateQueue(): Promise<void> {
   }
 }
 
-export default function (pi) {
+export default function (pi: ExtensionAPI) {
   if (!enabled()) {
     return;
   }
@@ -180,9 +187,32 @@ export default function (pi) {
   let agentActive = false;
   let blockedCount = 0;
   let blockedMessage: string | undefined;
+  const awaitingExec = new Set<string>();
   let lastState: AgentState | undefined;
   let lastMessage: string | undefined;
   let rootSession = false;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = undefined;
+    }
+  }
+
+  function syncHeartbeat() {
+    stopHeartbeat();
+    if (!rootSession || desiredState().state === "idle") {
+      return;
+    }
+    heartbeatTimer = setTimeout(() => {
+      heartbeatTimer = undefined;
+      if (rootSession) {
+        publishState(true);
+      }
+    }, activeHeartbeatMs);
+    heartbeatTimer.unref?.();
+  }
 
   function desiredState() {
     if (blockedCount > 0) {
@@ -190,6 +220,9 @@ export default function (pi) {
     }
     if (agentActive) {
       return { state: "working" as const, message: undefined };
+    }
+    if (awaitingExec.size > 0) {
+      return { state: "working" as const, message: "awaiting exec result" };
     }
     return { state: "idle" as const, message: undefined };
   }
@@ -202,6 +235,7 @@ export default function (pi) {
     lastState = next.state;
     lastMessage = next.message;
     queueState(next.state, next.message);
+    syncHeartbeat();
   }
 
   pi.events.on("herdr:blocked", (data) => {
@@ -222,9 +256,19 @@ export default function (pi) {
     publishState();
   });
 
+  pi.events.on("pi:exec-background", (data) => {
+    if (!rootSession || typeof data?.id !== "string") {
+      return;
+    }
+    if (data.active) {
+      awaitingExec.add(data.id);
+    } else {
+      awaitingExec.delete(data.id);
+    }
+    publishState();
+  });
+
   pi.on("session_start", async (event, ctx) => {
-    // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
-    // and RPC still reports hasUI=true, so mode is the reliable gate.
     if (ctx?.mode !== "tui") {
       return;
     }
@@ -254,4 +298,5 @@ export default function (pi) {
     agentActive = false;
     publishState();
   });
+
 }
