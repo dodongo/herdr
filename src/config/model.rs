@@ -247,12 +247,15 @@ pub struct SessionConfig {
     /// Resume supported AI-agent panes into their native conversation sessions
     /// when restoring a Herdr session. Default: true.
     pub resume_agents_on_restore: bool,
+    /// Create a workspace when an attached client has none. Default: true.
+    pub auto_create_default_workspace: bool,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             resume_agents_on_restore: true,
+            auto_create_default_workspace: true,
         }
     }
 }
@@ -1214,13 +1217,16 @@ new_cwd = "~/Projects"
     fn resume_agents_on_restore_defaults_on_and_parses() {
         let default_config = Config::default();
         assert!(default_config.session.resume_agents_on_restore);
+        assert!(default_config.session.auto_create_default_workspace);
 
         let toml = r#"
 [session]
 resume_agents_on_restore = false
+auto_create_default_workspace = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+        assert!(!config.session.auto_create_default_workspace);
     }
 
     #[test]

@@ -50,7 +50,11 @@ pub(crate) struct ReceivedHandoff {
 
 #[cfg(unix)]
 pub(crate) fn handoff_socket_path() -> PathBuf {
-    crate::session::data_dir().join(format!("herdr-handoff-{}.sock", std::process::id()))
+    // Unix socket paths are capped near 104 bytes (SUN_LEN); a long session
+    // name pushes the session data dir past it, so the short-lived handoff
+    // socket lives in the per-user temp dir instead. A squatted path fails
+    // bind and the handoff rolls back, so predictability is not exploitable.
+    std::env::temp_dir().join(format!("herdr-handoff-{}.sock", std::process::id()))
 }
 
 #[cfg(unix)]

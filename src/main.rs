@@ -384,6 +384,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Resume supported AI-agent panes into their native conversation sessions after
 # a Herdr server restart. Requires official integrations that report session refs.
 # resume_agents_on_restore = true
+# Create a workspace automatically when an attached client has none.
+# auto_create_default_workspace = true
 
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.

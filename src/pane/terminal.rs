@@ -1184,6 +1184,11 @@ impl GhosttyPaneTerminal {
         let in_progress_default_color_event = core.default_color_event_tracker.in_progress_event();
         let default_color_events = core.default_color_event_tracker.drain_pending();
         let xtgettcap_responses = core.xtgettcap_query_tracker.drain_pending();
+        let viewport_row = core.terminal.scrollbar().ok().and_then(|scrollbar| {
+            let max_offset = scrollbar.total.saturating_sub(scrollbar.len);
+            let offset = max_offset.saturating_sub(scrollbar.offset);
+            (offset > 0).then_some(max_offset - offset)
+        });
         let write_started = crate::render_prof::timer();
         self.write_pty_bytes_with_ordered_responses(
             &mut core,
@@ -1194,6 +1199,15 @@ impl GhosttyPaneTerminal {
             &mut terminal_responses,
         );
         let clipboard_writes = core.terminal.take_clipboard_writes();
+        if let Some(viewport_row) = viewport_row {
+            if let Ok(scrollbar) = core.terminal.scrollbar() {
+                let max_offset = scrollbar.total.saturating_sub(scrollbar.len);
+                ghostty_set_scroll_offset_from_bottom(
+                    &mut core.terminal,
+                    max_offset.saturating_sub(viewport_row),
+                );
+            }
+        }
         let reported_cwd = core
             .terminal
             .take_pwd_changes()
@@ -1351,9 +1365,26 @@ impl GhosttyPaneTerminal {
             return;
         };
 
+        let mut ansi = Vec::new();
         if input_state.alternate_screen {
-            core.terminal.write(b"\x1b[?1049h");
+            ansi.extend_from_slice(b"\x1b[?1049h");
         }
+        ansi.extend_from_slice(match input_state.mouse_protocol_mode {
+            crate::input::MouseProtocolMode::None => b"",
+            crate::input::MouseProtocolMode::Press => b"\x1b[?9h",
+            crate::input::MouseProtocolMode::PressRelease => b"\x1b[?1000h",
+            crate::input::MouseProtocolMode::ButtonMotion => b"\x1b[?1002h",
+            crate::input::MouseProtocolMode::AnyMotion => b"\x1b[?1003h",
+        });
+        ansi.extend_from_slice(match input_state.mouse_protocol_encoding {
+            crate::input::MouseProtocolEncoding::Default => b"",
+            crate::input::MouseProtocolEncoding::Utf8 => b"\x1b[?1005h",
+            crate::input::MouseProtocolEncoding::Sgr => b"\x1b[?1006h",
+        });
+        if input_state.mouse_alternate_scroll {
+            ansi.extend_from_slice(b"\x1b[?1007h");
+        }
+        core.terminal.write(&ansi);
         let _ = core.terminal.mode_set(
             crate::ghostty::MODE_APPLICATION_CURSOR_KEYS,
             input_state.application_cursor,
@@ -1366,51 +1397,13 @@ impl GhosttyPaneTerminal {
             crate::ghostty::MODE_FOCUS_EVENT,
             input_state.focus_reporting,
         );
-        let _ = core.terminal.mode_set(
-            crate::ghostty::MODE_MOUSE_ALTERNATE_SCROLL,
-            input_state.mouse_alternate_scroll,
-        );
+        // Mouse protocol modes were already replayed as raw sequences above so
+        // the embedded VT processes them; only the 0.8.0 color-scheme report
+        // mode still needs explicit tracking here.
         let _ = core.terminal.mode_set(
             crate::ghostty::MODE_COLOR_SCHEME_REPORT,
             input_state.color_scheme_reporting,
         );
-
-        for mode in [
-            MODE_MOUSE_X10,
-            MODE_MOUSE_PRESS_RELEASE,
-            MODE_MOUSE_BUTTON_MOTION,
-            MODE_MOUSE_ANY_MOTION,
-        ] {
-            let _ = core.terminal.mode_set(mode, false);
-        }
-        let mouse_mode = match input_state.mouse_protocol_mode {
-            crate::input::MouseProtocolMode::None => None,
-            crate::input::MouseProtocolMode::Press => Some(MODE_MOUSE_X10),
-            crate::input::MouseProtocolMode::PressRelease => Some(MODE_MOUSE_PRESS_RELEASE),
-            crate::input::MouseProtocolMode::ButtonMotion => Some(MODE_MOUSE_BUTTON_MOTION),
-            crate::input::MouseProtocolMode::AnyMotion => Some(MODE_MOUSE_ANY_MOTION),
-        };
-        if let Some(mode) = mouse_mode {
-            let _ = core.terminal.mode_set(mode, true);
-        }
-
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_UTF8, false);
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_SGR, false);
-        match input_state.mouse_protocol_encoding {
-            crate::input::MouseProtocolEncoding::Default => {}
-            crate::input::MouseProtocolEncoding::Utf8 => {
-                let _ = core
-                    .terminal
-                    .mode_set(crate::ghostty::MODE_MOUSE_UTF8, true);
-            }
-            crate::input::MouseProtocolEncoding::Sgr => {
-                let _ = core.terminal.mode_set(crate::ghostty::MODE_MOUSE_SGR, true);
-            }
-        }
 
         if input_state.modify_other_keys {
             core.terminal.write(b"\x1b[>4;2m");
@@ -4000,6 +3993,14 @@ mod tests {
         let key = crate::input::parse_terminal_key_sequence("\x1b[13;2u").unwrap();
         let encoded = pane.encode_terminal_key(key.clone(), crate::input::KeyboardProtocol::Legacy);
         assert_eq!(encoded, b"\x1b[27;2;13~");
+
+        let encoded = pane.encode_mouse_wheel(
+            crossterm::event::MouseEventKind::ScrollUp,
+            1,
+            1,
+            crossterm::event::KeyModifiers::empty(),
+        );
+        assert_eq!(encoded.as_deref(), Some(b"\x1b[<64;2;2M".as_slice()));
     }
 
     #[test]
@@ -4519,6 +4520,28 @@ mod tests {
             assert_eq!(metrics.offset_from_bottom, 0);
             assert!(pane.visible_text().contains("000004"));
         }
+    }
+
+    #[test]
+    fn pty_output_keeps_a_scrolled_viewport_anchored() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(10, 3, 100).unwrap();
+        write_numbered_lines(&mut terminal, 10);
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+
+        pane.set_scroll_offset_from_bottom(4);
+        let visible_before = pane.visible_text();
+        let metrics_before = pane.scroll_metrics().expect("metrics before output");
+        pane.process_pty_bytes(pane_id, 0, b"\\r\\n000010\\r\\n000011", &tx);
+
+        let metrics_after = pane.scroll_metrics().expect("metrics after output");
+        assert_eq!(pane.visible_text(), visible_before);
+        assert_eq!(
+            metrics_after.offset_from_bottom,
+            metrics_before.offset_from_bottom + metrics_after.max_offset_from_bottom
+                - metrics_before.max_offset_from_bottom
+        );
     }
 
     #[test]

@@ -299,6 +299,10 @@ impl App {
             self.refresh_new_herdr_toast_context_for_update(update, &previous_toast);
             self.emit_pane_state_update(update);
         }
+        if !pane_updates.is_empty() {
+            self.render_dirty.request_generic();
+            self.render_notify.notify_one();
+        }
         self.sync_agent_metadata_deadline();
         if let Some((
             overlay,

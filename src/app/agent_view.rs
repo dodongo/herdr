@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashMap};
 
 use crate::api::schema::{
     AgentStatus, AgentViewBuiltinField, AgentViewBuiltinSortField, AgentViewContext,
@@ -74,7 +74,58 @@ pub(crate) fn apply_agent_view(app: &AppState, entries: &mut Vec<AgentPanelEntry
                 std::cmp::Reverse(entry.last_agent_state_change_seq),
             )
         });
+    } else {
+        group_subagents_below_parents(app, entries);
     }
+}
+
+fn group_subagents_below_parents(app: &AppState, entries: &mut Vec<AgentPanelEntry>) {
+    let pane_indices: HashMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| public_pane_id(app, entry).map(|id| (id, index)))
+        .collect();
+    let mut children = vec![Vec::new(); entries.len()];
+    let mut has_parent = vec![false; entries.len()];
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(parent) = entry
+            .tokens
+            .get("p_parent_pane")
+            .and_then(|id| pane_indices.get(id))
+            .copied()
+            .filter(|parent| *parent != index)
+        else {
+            continue;
+        };
+        children[parent].push(index);
+        has_parent[index] = true;
+    }
+    if !has_parent.iter().any(|value| *value) {
+        return;
+    }
+
+    fn append(index: usize, children: &[Vec<usize>], visited: &mut [bool], order: &mut Vec<usize>) {
+        if std::mem::replace(&mut visited[index], true) {
+            return;
+        }
+        order.push(index);
+        for child in &children[index] {
+            append(*child, children, visited, order);
+        }
+    }
+
+    let mut visited = vec![false; entries.len()];
+    let mut order = Vec::with_capacity(entries.len());
+    for index in 0..entries.len() {
+        if !has_parent[index] {
+            append(index, &children, &mut visited, &mut order);
+        }
+    }
+    for index in 0..entries.len() {
+        append(index, &children, &mut visited, &mut order);
+    }
+    let mut slots: Vec<Option<AgentPanelEntry>> = entries.drain(..).map(Some).collect();
+    entries.extend(order.into_iter().map(|index| slots[index].take().unwrap()));
 }
 
 pub(crate) fn presented_workspace_idx(app: &AppState) -> Option<usize> {
@@ -517,6 +568,121 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].ws_idx, 1);
         assert_eq!(entries[1].ws_idx, 0);
+    }
+
+    fn lineage_state() -> (AppState, Vec<crate::layout::PaneId>) {
+        let mut workspace = Workspace::test_new("one");
+        for name in [
+            "unrelated",
+            "child-a",
+            "child-b",
+            "grandchild",
+            "missing",
+            "cycle-a",
+            "cycle-b",
+            "self",
+        ] {
+            workspace.test_add_tab(Some(name));
+        }
+        let panes: Vec<_> = workspace.tabs.iter().map(|tab| tab.root_pane).collect();
+
+        let mut state = AppState::test_new();
+        state.workspaces = vec![workspace];
+        state.ensure_test_terminals();
+        for pane in &panes {
+            let terminal_id = state.workspaces[0].tabs
+                [state.workspaces[0].find_tab_index_for_pane(*pane).unwrap()]
+            .panes[pane]
+                .attached_terminal_id
+                .clone();
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .detected_agent = Some(Agent::Pi);
+        }
+
+        let pane_id = |pane| {
+            crate::workspace::public_pane_id_for_number(
+                &state.workspaces[0].id,
+                state.workspaces[0].public_pane_number(pane).unwrap(),
+            )
+        };
+        for (child, parent) in [
+            (2, pane_id(panes[0])),
+            (3, pane_id(panes[0])),
+            (4, pane_id(panes[2])),
+            (5, "missing:p1".into()),
+            (6, pane_id(panes[7])),
+            (7, pane_id(panes[6])),
+            (8, pane_id(panes[8])),
+        ] {
+            let terminal_id = state.workspaces[0].tabs[child].panes[&panes[child]]
+                .attached_terminal_id
+                .clone();
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .metadata_tokens
+                .patch(
+                    HashMap::from([("p_parent_pane".to_string(), Some(parent))]),
+                    None,
+                    std::time::Instant::now(),
+                );
+        }
+        (state, panes)
+    }
+
+    #[test]
+    fn grouped_sort_places_stable_nested_subagents_below_their_parent() {
+        let (state, original) = lineage_state();
+        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+            .into_iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        let expected = [
+            original[0],
+            original[2],
+            original[4],
+            original[3],
+            original[1],
+            original[5],
+            original[8],
+            original[6],
+            original[7],
+        ];
+        assert_eq!(panes, expected);
+    }
+
+    #[test]
+    fn priority_sort_bypasses_parent_grouping() {
+        let (mut state, original) = lineage_state();
+        state.agent_panel_sort = crate::app::state::AgentPanelSort::Priority;
+        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+            .into_iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(panes, original);
+    }
+
+    #[test]
+    fn custom_sort_bypasses_parent_grouping() {
+        let (mut state, original) = lineage_state();
+        state.agent_view_override = Some(AgentViewSetParams {
+            source: "test.lineage".into(),
+            label: None,
+            filter: None,
+            sort: vec![AgentViewSort {
+                field: AgentViewSortField::Builtin(AgentViewBuiltinSortField::TabOrder),
+                order: AgentViewSortOrder::Desc,
+            }],
+        });
+        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+            .into_iter()
+            .map(|entry| entry.pane_id)
+            .collect();
+        assert_eq!(panes, original.into_iter().rev().collect::<Vec<_>>());
     }
 
     #[test]

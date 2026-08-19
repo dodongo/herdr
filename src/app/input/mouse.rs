@@ -630,12 +630,6 @@ impl AppState {
                         self.mode = Mode::Terminal;
                     }
 
-                    if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                        self.selection = None;
-                        self.selection_autoscroll = None;
-                        return self.mouse_pane_focus_action(info.id);
-                    }
-
                     let (row, col) = (
                         mouse.row - info.inner_rect.y,
                         mouse.column - info.inner_rect.x,
@@ -812,6 +806,13 @@ impl AppState {
                     self.drag = None;
                     self.selection_autoscroll = None;
                     if was_click {
+                        if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned()
+                        {
+                            let mut down = mouse;
+                            down.kind = MouseEventKind::Down(MouseButton::Left);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, down);
+                            let _ = self.forward_pane_mouse_button(terminal_runtimes, &info, mouse);
+                        }
                         self.selection = None;
                     } else if was_finalized {
                         // Double-click already finalized this word selection.
@@ -1668,6 +1669,12 @@ impl AppState {
         else {
             return false;
         };
+        if rt
+            .scroll_metrics()
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0)
+        {
+            return false;
+        }
         let column = mouse.column.saturating_sub(info.inner_rect.x);
         let row = mouse.row.saturating_sub(info.inner_rect.y);
         let Some(bytes) = rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers) else {
