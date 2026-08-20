@@ -1325,13 +1325,15 @@ fn run_client_with_mode(
         ) {
             Ok(encoding) => encoding,
             Err(err) => {
-                if handoff_retry_allowed && err.to_string().contains(HANDOFF_RECONNECT_PHRASE) {
-                    if handoff_deadline.is_none() {
-                        eprintln!("herdr: live update in progress; reconnecting...");
-                        handoff_deadline =
-                            Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
-                    }
-                    if std::time::Instant::now() < handoff_deadline.unwrap()
+                if handoff_retry_allowed
+                    && handoff_deadline.is_none()
+                    && err.to_string().contains(HANDOFF_RECONNECT_PHRASE)
+                {
+                    eprintln!("herdr: live update in progress; reconnecting...");
+                    handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
+                }
+                if let Some(deadline) = handoff_deadline {
+                    if std::time::Instant::now() < deadline
                         && !should_quit.load(Ordering::Acquire)
                     {
                         std::thread::sleep(Duration::from_millis(250));
@@ -1342,13 +1344,10 @@ fn run_client_with_mode(
                 std::process::exit(1);
             }
         };
-        // A successful handshake ends any handoff window, so a much later
-        // connection loss fails fast instead of silently retrying. The lint
-        // cannot see the cross-iteration reads of the reassignment paths.
-        #[allow(unused_assignments)]
-        {
-            handoff_deadline = None;
-        }
+        // The handoff window survives handshake success: the dying server can
+        // accept one final handshake and then close, so only a session that
+        // outlives the window proves the replacement server is really up.
+        // Connection losses after the window expire fail fast as before.
 
         if let Some((terminal_id, takeover)) = attach_request.take() {
             let attach = ClientMessage::AttachTerminal {
@@ -1441,18 +1440,33 @@ fn run_client_with_mode(
                 continue;
             }
 
-            let _ = writeln!(io::stderr(), "herdr: {err}");
-            crate::logging::shutdown("client");
-
-            let detached = matches!(
+            let deliberate_detach = matches!(
                 &err,
                 ClientError::ServerShutdown {
                     reason: Some(reason)
                 } if reason == "detached"
             );
+
+            // Inside a live handoff window the dying server can accept a
+            // handshake and then close without the handoff phrase; retry in
+            // place until the replacement server holds a stable session.
+            if let Some(deadline) = handoff_deadline {
+                if !deliberate_detach
+                    && std::time::Instant::now() < deadline
+                    && !should_quit.load(Ordering::Acquire)
+                {
+                    eprintln!("herdr: {err}; retrying while the live update completes...");
+                    std::thread::sleep(Duration::from_millis(250));
+                    continue;
+                }
+            }
+
+            let _ = writeln!(io::stderr(), "herdr: {err}");
+            crate::logging::shutdown("client");
+
             let connection_lost_during_terminal_hangup =
                 terminal_restore_failed && matches!(&err, ClientError::ConnectionLost(_));
-            if detached || connection_lost_during_terminal_hangup {
+            if deliberate_detach || connection_lost_during_terminal_hangup {
                 return Ok(());
             }
 
