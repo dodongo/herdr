@@ -13,6 +13,8 @@ pub(crate) struct MetadataTokens {
 }
 
 pub(crate) const MAX_SEQUENCE_SOURCES: usize = 32;
+/// Pane metadata token naming a presentation profile (sound and sidebar rows).
+pub(crate) const PRESENTATION_TOKEN: &str = "p_presentation";
 
 pub(crate) fn sequence_is_fresh(
     sequences: &HashMap<String, u64>,

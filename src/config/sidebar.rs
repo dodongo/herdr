@@ -380,9 +380,17 @@ pub struct AgentsSidebarConfig {
 }
 
 impl AgentsSidebarConfig {
-    pub(crate) fn rows_for_agent(&self, agent: Option<Agent>) -> &AgentSidebarRows {
-        agent
-            .and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+    /// Rows for a pane: a `p_presentation` profile wins, then the detected agent.
+    pub(crate) fn rows_for(
+        &self,
+        agent: Option<Agent>,
+        profile: Option<&str>,
+    ) -> &AgentSidebarRows {
+        profile
+            .and_then(|profile| self.rows_by_agent.get(profile))
+            .or_else(|| {
+                agent.and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+            })
             .unwrap_or(&self.rows)
     }
 }

@@ -3223,8 +3223,11 @@ impl AppState {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
         let suppress_active_tab_notifications =
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
-        let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
-            .filter(|_| self.sound.allows(known_agent));
+        let presentation = terminal_state.presentation_profile();
+        let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications).filter(|_| {
+            self.sound
+                .allows_presentation(known_agent, presentation.as_deref())
+        });
         let build_toast = || {
             let workspace_label =
                 self.workspaces[ws_idx].display_name_from_terminals(&self.terminals);

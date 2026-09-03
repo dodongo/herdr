@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -20,6 +21,9 @@ pub struct SoundConfig {
     /// Relative paths are resolved from the config file's directory.
     pub request_path: Option<PathBuf>,
     pub agents: AgentSoundOverrides,
+    /// Named presentation profiles selected by a pane's `p_presentation`
+    /// metadata token; a profile wins over the detected agent's setting.
+    pub profiles: BTreeMap<String, AgentSoundSetting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -58,11 +62,18 @@ pub enum AgentSoundSetting {
 
 impl SoundConfig {
     pub fn allows(&self, agent: Option<Agent>) -> bool {
+        self.allows_presentation(agent, None)
+    }
+
+    pub fn allows_presentation(&self, agent: Option<Agent>, profile: Option<&str>) -> bool {
         if !self.enabled {
             return false;
         }
-
-        !matches!(self.agents.for_agent(agent), AgentSoundSetting::Off)
+        let setting = profile
+            .and_then(|profile| self.profiles.get(profile).copied())
+            .filter(|setting| *setting != AgentSoundSetting::Default)
+            .unwrap_or_else(|| self.agents.for_agent(agent));
+        !matches!(setting, AgentSoundSetting::Off)
     }
 
     pub fn path_for(&self, sound: crate::sound::Sound) -> Option<PathBuf> {
@@ -155,6 +166,7 @@ impl Default for SoundConfig {
             done_path: None,
             request_path: None,
             agents: AgentSoundOverrides::default(),
+            profiles: BTreeMap::new(),
         }
     }
 }
@@ -192,6 +204,25 @@ mod tests {
 
     use super::*;
     use crate::config::{config_path, Config};
+
+    #[test]
+    fn presentation_profile_overrides_the_detected_agent() {
+        let toml = r#"
+[ui.sound]
+enabled = true
+
+[ui.sound.profiles]
+subagent = "off"
+loud = "on"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let sound = &config.ui.sound;
+        assert!(sound.allows(Some(Agent::Pi)));
+        assert!(!sound.allows_presentation(Some(Agent::Pi), Some("subagent")));
+        assert!(sound.allows_presentation(Some(Agent::Pi), Some("loud")));
+        assert!(sound.allows_presentation(Some(Agent::Pi), Some("unknown")));
+        assert!(!sound.allows_presentation(Some(Agent::Droid), Some("unknown")));
+    }
 
     #[test]
     fn sound_table_config_parses() {

@@ -1795,6 +1795,16 @@ impl TerminalState {
             })
     }
 
+    /// The presentation profile a pane asked for through the `p_presentation`
+    /// metadata token. It selects named sound and sidebar-row settings without
+    /// touching agent detection, so a pi pane can present as, say, "subagent".
+    pub fn presentation_profile(&self) -> Option<String> {
+        self.metadata_tokens
+            .values()
+            .remove(crate::metadata_tokens::PRESENTATION_TOKEN)
+            .filter(|value| !value.is_empty())
+    }
+
     pub fn effective_agent_label(&self) -> Option<&str> {
         self.hook_authority
             .as_ref()

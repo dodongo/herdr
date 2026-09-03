@@ -41,7 +41,13 @@ pub(super) fn agent_rows(
     state_text: &str,
 ) -> Vec<Vec<ResolvedToken>> {
     config
-        .rows_for_agent(entry.agent)
+        .rows_for(
+            entry.agent,
+            entry
+                .tokens
+                .get(crate::metadata_tokens::PRESENTATION_TOKEN)
+                .map(String::as_str),
+        )
         .iter()
         .filter_map(|row| {
             let resolved = row
@@ -282,6 +288,37 @@ mod tests {
             agent_rows(&config, &pi, "working"),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Workspace(
                 "repo".into()
+            ))]]
+        );
+    }
+
+    #[test]
+    fn presentation_profile_rows_win_over_the_detected_agent() {
+        let mut config = AgentsSidebarConfig::default();
+        config
+            .rows_by_agent
+            .insert("pi".into(), vec![vec![AgentSidebarToken::Agent]]);
+        config
+            .rows_by_agent
+            .insert("subagent".into(), vec![vec![AgentSidebarToken::StateText]]);
+        let mut pane = entry();
+        pane.tokens.insert(
+            crate::metadata_tokens::PRESENTATION_TOKEN.into(),
+            "subagent".into(),
+        );
+
+        assert_eq!(
+            agent_rows(&config, &pane, "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::StateText(
+                "working".into()
+            ))]]
+        );
+
+        pane.tokens.clear();
+        assert_eq!(
+            agent_rows(&config, &pane, "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Agent(
+                "pi".into()
             ))]]
         );
     }

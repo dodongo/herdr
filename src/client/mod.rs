@@ -1294,8 +1294,7 @@ fn run_client_with_mode(
             Ok(s) => s,
             Err(err) => {
                 if let Some(deadline) = handoff_deadline {
-                    if std::time::Instant::now() < deadline
-                        && !should_quit.load(Ordering::Acquire)
+                    if std::time::Instant::now() < deadline && !should_quit.load(Ordering::Acquire)
                     {
                         std::thread::sleep(Duration::from_millis(250));
                         continue;
@@ -1333,8 +1332,7 @@ fn run_client_with_mode(
                     handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
                 }
                 if let Some(deadline) = handoff_deadline {
-                    if std::time::Instant::now() < deadline
-                        && !should_quit.load(Ordering::Acquire)
+                    if std::time::Instant::now() < deadline && !should_quit.load(Ordering::Acquire)
                     {
                         std::thread::sleep(Duration::from_millis(250));
                         continue;
@@ -1375,8 +1373,7 @@ fn run_client_with_mode(
 
         // Install a panic hook to restore the terminal on panic (same as monolithic).
         let panic_resets_modify_other_keys = terminal_guard.reset_modify_other_keys;
-        let panic_resets_host_color_scheme_reports =
-            terminal_guard.reset_host_color_scheme_reports;
+        let panic_resets_host_color_scheme_reports = terminal_guard.reset_host_color_scheme_reports;
         #[cfg(windows)]
         let panic_restore_windows_input_mode = terminal_guard.restore_windows_input_mode;
         let original_hook = std::panic::take_hook();
@@ -1432,7 +1429,9 @@ fn run_client_with_mode(
                 {
                     crate::logging::shutdown("client");
                     let err = reexec_for_handoff();
-                    eprintln!("herdr: re-exec after live update failed ({err}); reconnecting in place...");
+                    eprintln!(
+                        "herdr: re-exec after live update failed ({err}); reconnecting in place..."
+                    );
                 }
                 eprintln!("herdr: live update in progress; reconnecting...");
                 handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
