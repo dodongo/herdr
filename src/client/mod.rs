@@ -63,13 +63,26 @@ const HANDOFF_RECONNECT_WINDOW: Duration = Duration::from_secs(120);
 /// the replacement server listens, instead of failing fast.
 const HANDOFF_RECONNECT_ENV: &str = "HERDR_HANDOFF_RECONNECT";
 
+/// The binary the replacement server runs, when the shutdown reason names it.
+fn handoff_exe_from_reason(reason: &str) -> Option<std::path::PathBuf> {
+    reason
+        .split("; ")
+        .find_map(|part| part.strip_prefix("exe="))
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
 /// Replace this process with the freshly installed binary so the client picks
 /// up new code after a live update. Same PID, so the hosting terminal (for
 /// example a Zed pane) never sees its child exit. Returns only on failure.
+/// `exe` is the server's new binary; without it this process's own path is
+/// used, which is only correct when that path was updated in place.
 #[cfg(unix)]
-fn reexec_for_handoff() -> io::Error {
+fn reexec_for_handoff(exe: Option<std::path::PathBuf>) -> io::Error {
     use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("herdr"));
+    let exe = exe
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("herdr"));
     std::process::Command::new(exe)
         .args(std::env::args_os().skip(1))
         .env(HANDOFF_RECONNECT_ENV, "1")
@@ -1427,8 +1440,14 @@ fn run_client_with_mode(
                 // in-process reconnect only if the exec itself fails.
                 #[cfg(unix)]
                 {
+                    let exe = match &err {
+                        ClientError::ServerShutdown { reason: Some(reason) } => {
+                            handoff_exe_from_reason(reason)
+                        }
+                        _ => None,
+                    };
                     crate::logging::shutdown("client");
-                    let err = reexec_for_handoff();
+                    let err = reexec_for_handoff(exe);
                     eprintln!(
                         "herdr: re-exec after live update failed ({err}); reconnecting in place..."
                     );
@@ -2741,6 +2760,20 @@ fn init_logging() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handoff_reason_names_the_replacement_binary() {
+        assert_eq!(
+            handoff_exe_from_reason(
+                "live update in progress; reconnect after handoff completes; exe=/opt/herdr/herdr"
+            ),
+            Some(std::path::PathBuf::from("/opt/herdr/herdr"))
+        );
+        assert_eq!(
+            handoff_exe_from_reason("live update in progress; reconnect after handoff completes"),
+            None
+        );
+    }
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
 

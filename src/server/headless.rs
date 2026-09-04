@@ -1269,7 +1269,7 @@ impl HeadlessServer {
         }
 
         self.handoff_in_progress = true;
-        self.disconnect_all_clients_for_handoff();
+        self.disconnect_all_clients_for_handoff(import_exe.as_deref());
         let _ = reject_pending_client_connections(&self.client_listener);
 
         let mut paused_terminal_ids = Vec::new();
@@ -2801,17 +2801,22 @@ impl HeadlessServer {
         }
     }
 
+    /// Tell every client to reconnect. The reason names the binary the new
+    /// server runs so a client can re-exec that build instead of its own,
+    /// which after an update is the old one and would fail the protocol check.
     #[cfg(unix)]
-    fn disconnect_all_clients_for_handoff(&mut self) {
+    fn disconnect_all_clients_for_handoff(&mut self, import_exe: Option<&std::path::Path>) {
+        let mut reason = "live update in progress; reconnect after handoff completes".to_owned();
+        if let Some(exe) = import_exe {
+            reason.push_str(&format!("; exe={}", exe.display()));
+        }
         let client_ids = self.clients.keys().copied().collect::<Vec<_>>();
         for client_id in client_ids {
             self.send_client_graphics_cleanup(client_id);
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
-                    reason: Some(
-                        "live update in progress; reconnect after handoff completes".to_owned(),
-                    ),
+                    reason: Some(reason.clone()),
                 },
             );
             if let Some(client) = self.clients.get_mut(&client_id) {
