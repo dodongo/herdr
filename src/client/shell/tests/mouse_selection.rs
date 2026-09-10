@@ -487,6 +487,120 @@ fn scrolled_pane_click_does_not_forward_application_mouse_input() {
 }
 
 #[test]
+fn delayed_click_requires_the_original_pane_at_release() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let point = (pane.inner_rect.x + 1, pane.inner_rect.y + 1);
+
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::empty(),
+    })]);
+
+    // The release still lands in the same rectangle, but that rectangle now
+    // belongs to a different pane after a projected layout change.
+    state.hits.panes[0].pane_id = "pane_2".into();
+    let release = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::empty(),
+    })]);
+
+    assert!(release.requests.is_empty());
+    assert!(state.selection.is_none());
+}
+
+#[test]
+fn scrolled_pane_right_button_does_not_start_application_capture() {
+    let mut projected = snapshot();
+    projected.panes[0].right_click_passthrough = true;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 1,
+        max_offset_from_bottom: 4,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let down = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: pane.inner_rect.x + 1,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+
+    assert!(
+        !down
+            .requests
+            .iter()
+            .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. }))
+    );
+    assert!(state.pane_mouse_gesture.is_none());
+}
+
+#[test]
+fn scrolled_pane_middle_button_does_not_start_application_capture() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 1,
+        max_offset_from_bottom: 4,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let down = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Middle),
+        column: pane.inner_rect.x + 1,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::ALT,
+    })]);
+
+    assert!(
+        !down
+            .requests
+            .iter()
+            .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. }))
+    );
+    assert!(state.pane_mouse_gesture.is_none());
+
+    let wheel = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: pane.inner_rect.x + 1,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::ALT,
+    })]);
+    assert!(matches!(
+        &wheel.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }]
+            if pane_id == "pane_1"
+                && matches!(
+                    &events[..],
+                    [ClientPaneInputEvent::Mouse {
+                        kind: crate::protocol::ClientMouseKind::ScrollDown,
+                        modifiers,
+                        ..
+                    }] if *modifiers == KeyModifiers::ALT.bits()
+                )
+    ));
+}
+
+#[test]
 fn pane_mouse_drag_remains_host_selection_instead_of_application_input() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
@@ -598,6 +712,16 @@ fn pane_owned_right_click_forwards_the_complete_gesture() {
     ));
     assert!(state.overlay.is_none());
     assert!(state.pane_mouse_gesture.is_some());
+
+    let mut scrolled_surface = surface();
+    scrolled_surface.panes[0].mouse_reporting = true;
+    scrolled_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 1,
+        max_offset_from_bottom: 4,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(scrolled_surface);
+    state.compose(106, 20).expect("scrolled frame");
 
     let up = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Up(MouseButton::Right),
