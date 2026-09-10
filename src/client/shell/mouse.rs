@@ -1644,11 +1644,35 @@ impl ClientShellState {
         }
         if mouse.kind == MouseEventKind::Up(MouseButton::Left) && self.selection.is_some() {
             self.stop_selection_autoscroll();
+            let selection_hit = self
+                .hits
+                .panes
+                .iter()
+                .find(|hit| super::contains(hit.inner_rect, point))
+                .cloned();
+            let was_click = self
+                .selection
+                .as_ref()
+                .is_some_and(crate::selection::Selection::is_just_click);
             let copied = self
                 .selection
                 .as_mut()
                 .is_some_and(crate::selection::Selection::finish);
-            if copied && self.config.copy_on_select {
+            if was_click {
+                if let Some(hit) = selection_hit {
+                    if hit.mouse_reporting
+                        && hit
+                            .scroll
+                            .is_none_or(|metrics| metrics.offset_from_bottom == 0)
+                    {
+                        let mut down = mouse;
+                        down.kind = MouseEventKind::Down(MouseButton::Left);
+                        self.push_pane_mouse_event(&hit, down, down.modifiers, outcome);
+                        self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
+                    }
+                }
+                self.selection = None;
+            } else if copied && self.config.copy_on_select {
                 self.request_selection_copy(outcome, false);
                 self.selection = None;
             } else if !copied {
@@ -2117,16 +2141,7 @@ impl ClientShellState {
                     .find(|hit| super::contains(hit.rect, point))
                     .cloned();
                 if let Some(hit) = pane_hit {
-                    if hit.mouse_reporting && super::contains(hit.inner_rect, point) {
-                        self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
-                        self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
-                            last_position: self.pane_mouse_position(&hit, mouse),
-                            hit: hit.clone(),
-                            button: MouseButton::Left,
-                            stripped_modifiers: crossterm::event::KeyModifiers::empty(),
-                            last_event: mouse,
-                        });
-                    } else if super::contains(hit.inner_rect, point) {
+                    if super::contains(hit.inner_rect, point) {
                         let click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
                             viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),

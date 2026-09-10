@@ -405,35 +405,22 @@ fn pane_mouse_input_keeps_stable_target_and_endpoint_encoding() {
         row: pane.inner_rect.y + 1,
         modifiers: KeyModifiers::ALT,
     })]);
-    let [ClientMessage::ClientShellPaneInput { pane_id, events }] = &click.requests[..] else {
-        panic!("pane application click should use targeted canonical input");
-    };
-    assert_eq!(pane_id, "pane_1");
+    assert!(click.requests.is_empty());
     assert!(matches!(
-        &events[..],
-        [ClientPaneInputEvent::Mouse {
-            kind: crate::protocol::ClientMouseKind::Down(
-                crate::protocol::ClientMouseButton::Left
-            ),
-            position: ClientMousePosition::Cell { column: 2, row: 1 },
-            modifiers,
-            ..
-        }] if *modifiers == KeyModifiers::ALT.bits()
+        &click.actions[..],
+        [ClientShellAction::Endpoint { request, .. }]
+            if matches!(
+                request.method,
+                crate::api::schema::Method::PaneFocus(ref target) if target.pane_id == "pane_1"
+            )
     ));
-    let moved = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Moved,
-        column: 0,
-        row: 0,
-        modifiers: KeyModifiers::ALT,
-    })]);
-    assert!(moved.requests.is_empty());
-    assert!(state.pane_mouse_gesture.is_some());
-    state.hits.panes.clear();
+    assert!(state.selection.is_some());
+    assert!(state.pane_mouse_gesture.is_none());
     let release =
         state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
             kind: MouseEventKind::Up(MouseButton::Left),
-            column: 0,
-            row: 0,
+            column: pane.inner_rect.x + 2,
+            row: pane.inner_rect.y + 1,
             modifiers: KeyModifiers::ALT,
         })]);
     assert!(matches!(
@@ -442,15 +429,101 @@ fn pane_mouse_input_keeps_stable_target_and_endpoint_encoding() {
             if pane_id == "pane_1"
                 && matches!(
                     &events[..],
-                    [ClientPaneInputEvent::Mouse {
-                        kind: crate::protocol::ClientMouseKind::Up(
-                            crate::protocol::ClientMouseButton::Left
-                        ),
-                        ..
-                    }]
+                    [
+                        ClientPaneInputEvent::Mouse {
+                            kind: crate::protocol::ClientMouseKind::Down(
+                                crate::protocol::ClientMouseButton::Left
+                            ),
+                            position: ClientMousePosition::Cell { column: 2, row: 1 },
+                            modifiers,
+                            ..
+                        },
+                        ClientPaneInputEvent::Mouse {
+                            kind: crate::protocol::ClientMouseKind::Up(
+                                crate::protocol::ClientMouseButton::Left
+                            ),
+                            position: ClientMousePosition::Cell { column: 2, row: 1 },
+                            ..
+                        }
+                    ] if *modifiers == KeyModifiers::ALT.bits()
                 )
     ));
     assert!(state.pane_mouse_gesture.is_none());
+}
+
+#[test]
+fn scrolled_pane_click_does_not_forward_application_mouse_input() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 2,
+        max_offset_from_bottom: 4,
+        viewport_rows: 2,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let point = (pane.inner_rect.x + 1, pane.inner_rect.y + 1);
+
+    let down = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(down.requests.is_empty());
+    assert!(state.selection.is_some());
+
+    let up = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(up.requests.is_empty());
+    assert!(state.selection.is_none());
+}
+
+#[test]
+fn pane_mouse_drag_remains_host_selection_instead_of_application_input() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: pane.inner_rect.x,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let drag = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: pane.inner_rect.x + 2,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(drag.requests.is_empty());
+    assert!(
+        state
+            .selection
+            .as_ref()
+            .is_some_and(crate::selection::Selection::is_visible)
+    );
+
+    let release = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: pane.inner_rect.x + 2,
+        row: pane.inner_rect.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(release.requests.is_empty());
+    assert!(state.selection.is_none());
 }
 
 #[test]
@@ -472,37 +545,31 @@ fn pane_pixel_mouse_preserves_pane_relative_pixel_coordinates() {
     let report = format!("\x1b[<0;{x};{y}M");
 
     let outcome = state.handle_pixel_mouse(report.as_bytes(), geometry);
-    assert!(matches!(
-        &outcome.requests[..],
-        [ClientMessage::ClientShellPaneInput { pane_id, events }]
-            if pane_id == "pane_1"
-                && matches!(
-                    &events[..],
-                    [ClientPaneInputEvent::Mouse {
-                        kind: crate::protocol::ClientMouseKind::Down(
-                            crate::protocol::ClientMouseButton::Left
-                        ),
-                        position: ClientMousePosition::Pixels { x: 20, y: 20, .. },
-                        ..
-                    }]
-                )
-    ));
+    assert!(outcome.requests.is_empty());
+    assert!(state.selection.is_some());
 
-    let lost = state.handle_raw_events(vec![RawInputEvent::OuterFocusLost]);
+    let release_report = report.replace('M', "m");
+    let release = state.handle_pixel_mouse(release_report.as_bytes(), geometry);
     assert!(matches!(
-        &lost.requests[..],
-        [
-            ClientMessage::ClientShellPaneInput { pane_id, events },
-            ClientMessage::ClientShellFocus { focused: false }
-        ] if pane_id == "pane_1" && matches!(
+        &release.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }] if pane_id == "pane_1" && matches!(
             &events[..],
-            [ClientPaneInputEvent::Mouse {
-                kind: crate::protocol::ClientMouseKind::Up(
-                    crate::protocol::ClientMouseButton::Left
-                ),
-                position: ClientMousePosition::Pixels { x: 20, y: 20, .. },
-                ..
-            }]
+            [
+                ClientPaneInputEvent::Mouse {
+                    kind: crate::protocol::ClientMouseKind::Down(
+                        crate::protocol::ClientMouseButton::Left
+                    ),
+                    position: ClientMousePosition::Pixels { x: 20, y: 20, .. },
+                    ..
+                },
+                ClientPaneInputEvent::Mouse {
+                    kind: crate::protocol::ClientMouseKind::Up(
+                        crate::protocol::ClientMouseButton::Left
+                    ),
+                    position: ClientMousePosition::Pixels { x: 20, y: 20, .. },
+                    ..
+                }
+            ]
         )
     ));
 }
