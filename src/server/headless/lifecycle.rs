@@ -65,7 +65,7 @@ impl HeadlessServer {
         }
 
         self.handoff_in_progress = true;
-        self.disconnect_all_clients_for_handoff();
+        self.disconnect_all_clients_for_handoff(import_exe.as_deref());
         let _ = reject_pending_client_connections(&self.client_listener);
 
         let mut paused_terminal_ids = Vec::new();

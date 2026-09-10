@@ -269,8 +269,10 @@ rows = [["state_icon", { token = "machine", fg = "#fff", bold = true, dim = true
 
     #[test]
     fn presentation_profile_rows_precede_agent_and_default_rows() {
-        let mut config = AgentsSidebarConfig::default();
-        config.rows = vec![vec![AgentSidebarToken::Workspace]];
+        let mut config = AgentsSidebarConfig {
+            rows: vec![vec![AgentSidebarToken::Workspace]],
+            ..AgentsSidebarConfig::default()
+        };
         config
             .rows_by_agent
             .insert("pi".into(), vec![vec![AgentSidebarToken::Agent]]);

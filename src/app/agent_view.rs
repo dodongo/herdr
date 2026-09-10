@@ -116,8 +116,8 @@ fn group_subagents_below_parents(app: &AppState, entries: &mut Vec<AgentPanelEnt
 
     let mut visited = vec![false; entries.len()];
     let mut order = Vec::with_capacity(entries.len());
-    for index in 0..entries.len() {
-        if !has_parent[index] {
+    for (index, parent_present) in has_parent.iter().enumerate() {
+        if !parent_present {
             append(index, &children, &mut visited, &mut order);
         }
     }
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn grouped_sort_places_stable_nested_subagents_below_their_parent() {
         let (state, original) = lineage_state();
-        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+        let panes: Vec<_> = projected_entries(&state)
             .into_iter()
             .map(|entry| entry.pane_id)
             .collect();
@@ -658,7 +658,7 @@ mod tests {
     fn priority_sort_bypasses_parent_grouping() {
         let (mut state, original) = lineage_state();
         state.agent_panel_sort = crate::app::state::AgentPanelSort::Priority;
-        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+        let panes: Vec<_> = projected_entries(&state)
             .into_iter()
             .map(|entry| entry.pane_id)
             .collect();
@@ -677,7 +677,7 @@ mod tests {
                 order: AgentViewSortOrder::Desc,
             }],
         });
-        let panes: Vec<_> = crate::ui::agent_panel_entries(&state)
+        let panes: Vec<_> = projected_entries(&state)
             .into_iter()
             .map(|entry| entry.pane_id)
             .collect();

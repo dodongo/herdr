@@ -541,12 +541,10 @@ fn scrolled_pane_right_button_does_not_start_application_capture() {
         modifiers: KeyModifiers::empty(),
     })]);
 
-    assert!(
-        !down
-            .requests
-            .iter()
-            .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. }))
-    );
+    assert!(!down
+        .requests
+        .iter()
+        .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. })));
     assert!(state.pane_mouse_gesture.is_none());
 }
 
@@ -571,12 +569,10 @@ fn scrolled_pane_middle_button_does_not_start_application_capture() {
         modifiers: KeyModifiers::ALT,
     })]);
 
-    assert!(
-        !down
-            .requests
-            .iter()
-            .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. }))
-    );
+    assert!(!down
+        .requests
+        .iter()
+        .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. })));
     assert!(state.pane_mouse_gesture.is_none());
 
     let wheel = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
@@ -623,12 +619,10 @@ fn pane_mouse_drag_remains_host_selection_instead_of_application_input() {
         modifiers: KeyModifiers::empty(),
     })]);
     assert!(drag.requests.is_empty());
-    assert!(
-        state
-            .selection
-            .as_ref()
-            .is_some_and(crate::selection::Selection::is_visible)
-    );
+    assert!(state
+        .selection
+        .as_ref()
+        .is_some_and(crate::selection::Selection::is_visible));
 
     let release = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Up(MouseButton::Left),

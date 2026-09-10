@@ -1752,15 +1752,17 @@ impl HeadlessServer {
     }
 
     #[cfg(unix)]
-    fn disconnect_all_clients_for_handoff(&mut self) {
+    fn disconnect_all_clients_for_handoff(&mut self, import_exe: Option<&std::path::Path>) {
+        let mut reason = "live update in progress; reconnect after handoff completes".to_owned();
+        if let Some(executable) = import_exe {
+            reason.push_str(&format!("; exe={}", executable.display()));
+        }
         let client_ids = self.clients.keys().copied().collect::<Vec<_>>();
         for client_id in client_ids {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
-                    reason: Some(
-                        "live update in progress; reconnect after handoff completes".to_owned(),
-                    ),
+                    reason: Some(reason.clone()),
                 },
             );
             if let Some(client) = self.clients.get_mut(&client_id) {
@@ -3254,7 +3256,13 @@ impl HeadlessServer {
 
             // Forward sound notification when server-side sound policy allows it.
             // Clients still decide locally whether they can execute the side effect.
-            if self.app.state.toast_config.delay_seconds == 0 && self.app.state.sound.allows(agent)
+            let presentation = self.pane_presentation_profile(*pane_id);
+            if self.app.state.toast_config.delay_seconds == 0
+                && self
+                    .app
+                    .state
+                    .sound
+                    .allows_presentation(agent, presentation.as_deref())
             {
                 if let Some(sound) =
                     crate::app::actions::notification_sound_for_state_change_with_agent_labels(

@@ -5303,9 +5303,10 @@ mod tests {
         pane.set_scroll_offset_from_bottom(4);
         let visible_before = pane.visible_text();
         let metrics_before = pane.scroll_metrics().expect("metrics before output");
-        pane.process_pty_bytes(pane_id, 0, b"\\r\\n000010\\r\\n000011", &tx);
+        pane.process_pty_bytes(pane_id, 0, b"\r\n000010\r\n000011", &tx);
 
         let metrics_after = pane.scroll_metrics().expect("metrics after output");
+        assert!(metrics_after.max_offset_from_bottom > metrics_before.max_offset_from_bottom);
         assert_eq!(pane.visible_text(), visible_before);
         assert_eq!(
             metrics_after.offset_from_bottom,

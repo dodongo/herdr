@@ -293,6 +293,10 @@ pub fn wait_for_server_socket(socket_path: &Path, timeout: Duration) -> io::Resu
 /// 2. If no server → spawn server daemon → wait for socket readiness
 /// 3. Run the thin client (which connects to the server)
 pub fn auto_detect_launch(saved_federation: bool) -> io::Result<()> {
+    if std::env::var_os(crate::client::handoff::RECONNECT_ENV).is_some() {
+        // The replacement server owns startup; the re-exec'd client only retries attachment.
+        return crate::client::run_client();
+    }
     let socket_path = client_socket_path();
     info!(path = %socket_path.display(), "auto-detect launch starting");
 

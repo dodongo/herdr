@@ -693,9 +693,7 @@ impl App {
     }
 
     pub(crate) fn ensure_default_workspace(&mut self) -> bool {
-        if !self.state.auto_create_default_workspace
-            || !self.state.workspaces.is_empty()
-        {
+        if !self.state.auto_create_default_workspace || !self.state.workspaces.is_empty() {
             return false;
         }
 
@@ -2251,7 +2249,7 @@ mod tests {
 
         assert!(app.render_dirty.is_pending());
         assert_eq!(
-            crate::ui::agent_panel_entries(&app.state)[0].state,
+            crate::ui::agent_panel_entries_from(&app.state, &app.terminal_runtimes)[0].state,
             AgentState::Working
         );
     }

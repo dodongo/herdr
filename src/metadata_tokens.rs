@@ -13,6 +13,7 @@ pub(crate) struct MetadataTokens {
 }
 
 pub(crate) const MAX_SEQUENCE_SOURCES: usize = 32;
+pub(crate) const PRESENTATION_TOKEN: &str = "p_presentation";
 
 pub(crate) fn sequence_is_fresh(
     sequences: &HashMap<String, u64>,

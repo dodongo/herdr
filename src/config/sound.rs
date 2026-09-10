@@ -63,7 +63,7 @@ pub enum AgentSoundSetting {
 
 impl SoundConfig {
     pub fn allows(&self, agent: Option<Agent>) -> bool {
-        self.allows_presentation(agent, None)
+        self.enabled && !matches!(self.agents.for_agent(agent), AgentSoundSetting::Off)
     }
 
     pub fn allows_presentation(&self, agent: Option<Agent>, profile: Option<&str>) -> bool {
@@ -71,11 +71,13 @@ impl SoundConfig {
             return false;
         }
 
-        let setting = profile
+        profile
             .and_then(|profile| self.profiles.get(profile).copied())
             .filter(|setting| *setting != AgentSoundSetting::Default)
-            .unwrap_or_else(|| self.agents.for_agent(agent));
-        !matches!(setting, AgentSoundSetting::Off)
+            .map_or_else(
+                || self.allows(agent),
+                |setting| setting != AgentSoundSetting::Off,
+            )
     }
 
     pub fn path_for(&self, sound: crate::sound::Sound) -> Option<PathBuf> {
