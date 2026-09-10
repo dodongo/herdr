@@ -70,7 +70,13 @@ pub(crate) fn agent_rows(
     state_text: &str,
 ) -> Vec<Vec<ResolvedToken>> {
     config
-        .rows_for_agent(context.canonical_agent)
+        .rows_for(
+            context.canonical_agent,
+            context
+                .tokens
+                .get(crate::metadata_tokens::PRESENTATION_TOKEN)
+                .map(String::as_str),
+        )
         .iter()
         .filter_map(|row| {
             let resolved = row
@@ -259,6 +265,50 @@ rows = [["state_icon", { token = "machine", fg = "#fff", bold = true, dim = true
             assert_eq!(token.style.dim, Some(dim));
         }
         assert_eq!(agent_rows(&config, context(&entry), "working")[0].len(), 1);
+    }
+
+    #[test]
+    fn presentation_profile_rows_precede_agent_and_default_rows() {
+        let mut config = AgentsSidebarConfig::default();
+        config.rows = vec![vec![AgentSidebarToken::Workspace]];
+        config
+            .rows_by_agent
+            .insert("pi".into(), vec![vec![AgentSidebarToken::Agent]]);
+        config
+            .rows_by_agent
+            .insert("subagent".into(), vec![vec![AgentSidebarToken::StateText]]);
+        let mut entry = entry();
+
+        entry.tokens.insert(
+            crate::metadata_tokens::PRESENTATION_TOKEN.into(),
+            "subagent".into(),
+        );
+        assert_eq!(
+            agent_rows(&config, context(&entry), "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::StateText(
+                "working".into()
+            ))]]
+        );
+
+        entry.tokens.insert(
+            crate::metadata_tokens::PRESENTATION_TOKEN.into(),
+            "unknown".into(),
+        );
+        assert_eq!(
+            agent_rows(&config, context(&entry), "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Agent(
+                "pi".into()
+            ))]]
+        );
+
+        entry.tokens.clear();
+        entry.canonical_agent = None;
+        assert_eq!(
+            agent_rows(&config, context(&entry), "working"),
+            vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Workspace(
+                "repo".into()
+            ))]]
+        );
     }
 
     #[test]

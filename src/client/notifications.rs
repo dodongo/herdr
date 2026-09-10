@@ -12,9 +12,13 @@ pub(super) fn handle_shell_notification_effects(
 ) {
     for effect in effects {
         match effect {
-            shell::ClientShellNotificationEffect::Sound { sound, agent } => {
-                let agent = agent.as_deref().and_then(crate::detect::parse_agent_label);
-                if sound_config.allows(agent) {
+            shell::ClientShellNotificationEffect::Sound {
+                sound,
+                agent,
+                presentation,
+            } => {
+                let agent = agent.and_then(crate::detect::parse_agent_label);
+                if sound_config.allows_presentation(agent, presentation.as_deref()) {
                     crate::sound::play(sound, sound_config);
                 }
             }

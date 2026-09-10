@@ -758,6 +758,7 @@ pub(crate) enum ClientShellNotificationEffect {
     Sound {
         sound: crate::sound::Sound,
         agent: Option<String>,
+        presentation: Option<String>,
     },
     Terminal {
         title: String,
