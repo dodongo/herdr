@@ -8,6 +8,20 @@ fn env_lock() -> &'static Mutex<()> {
 }
 
 #[test]
+fn handoff_reason_names_the_replacement_binary() {
+    assert_eq!(
+        handoff_exe_from_reason(
+            "live update in progress; reconnect after handoff completes; exe=/opt/herdr/herdr"
+        ),
+        Some(std::path::PathBuf::from("/opt/herdr/herdr"))
+    );
+    assert_eq!(
+        handoff_exe_from_reason("live update in progress; reconnect after handoff completes"),
+        None
+    );
+}
+
+#[test]
 fn resize_signal_reports_even_when_polled_size_is_unchanged() {
     let size = (120, 40, 8, 16, true);
     assert!(resize_report_required(true, size, size));
