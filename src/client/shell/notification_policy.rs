@@ -62,6 +62,32 @@ impl ClientShellState {
         true
     }
 
+    fn presentation_profile_for(
+        &self,
+        endpoint_id: &ClientEndpointId,
+        pane_id: Option<&str>,
+    ) -> Option<String> {
+        let pane_id = pane_id?;
+        self.endpoints
+            .iter()
+            .find(|endpoint| &endpoint.endpoint_id == endpoint_id)
+            .and_then(|endpoint| endpoint.snapshot.as_deref())
+            .and_then(|snapshot| {
+                snapshot
+                    .agents
+                    .iter()
+                    .find(|agent| agent.pane_id == pane_id)
+            })
+            .and_then(|agent| {
+                agent
+                    .tokens
+                    .iter()
+                    .find(|(key, _)| key == crate::metadata_tokens::PRESENTATION_TOKEN)
+                    .map(|(_, value)| value.clone())
+            })
+            .filter(|profile| !profile.is_empty())
+    }
+
     pub(super) fn focus_visible_notification(&mut self, outcome: &mut ClientShellInput) {
         let Some(notification) = self.visible_notification.as_ref() else {
             return;
@@ -198,12 +224,17 @@ impl ClientShellState {
                 let suppress_sound =
                     pending.event.kind == SemanticNotificationKind::Finished && suppress_external;
                 if !suppress_sound {
+                    let presentation = self.presentation_profile_for(
+                        &pending.endpoint_id,
+                        pending.event.pane_id.as_deref(),
+                    );
                     effects.push(ClientShellNotificationEffect::Sound {
                         sound: match sound {
                             SemanticNotificationSound::Done => crate::sound::Sound::Done,
                             SemanticNotificationSound::Request => crate::sound::Sound::Request,
                         },
                         agent: pending.event.agent.clone(),
+                        presentation,
                     });
                 }
             }

@@ -447,9 +447,17 @@ pub struct AgentsSidebarConfig {
 }
 
 impl AgentsSidebarConfig {
-    pub(crate) fn rows_for_agent(&self, agent: Option<Agent>) -> &AgentSidebarRows {
-        agent
-            .and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+    /// Rows for a pane: a presentation profile wins, then the detected agent.
+    pub(crate) fn rows_for(
+        &self,
+        agent: Option<Agent>,
+        profile: Option<&str>,
+    ) -> &AgentSidebarRows {
+        profile
+            .and_then(|profile| self.rows_by_agent.get(profile))
+            .or_else(|| {
+                agent.and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+            })
             .unwrap_or(&self.rows)
     }
 }
@@ -739,7 +747,8 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 .rows_for(Some(Agent::Pi), Some("other")),
             &config.ui.sidebar.agents.rows
         );
-        for key in ["Sub Agent", "\"has space\"", "x".repeat(33).as_str()] {
+        let oversized = "x".repeat(33);
+        for key in ["Sub Agent", "\"has space\"", oversized.as_str()] {
             let input = format!("[ui.sidebar.agents.rows_by_agent]\n{key} = [[\"agent\"]]\n");
             assert!(
                 toml::from_str::<crate::config::Config>(&input).is_err(),
