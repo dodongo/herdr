@@ -1752,19 +1752,15 @@ impl HeadlessServer {
     }
 
     #[cfg(unix)]
-    /// Tell existing clients which binary the replacement server runs. This
-    /// lets versioned installs re-exec clients with the matching build.
-    fn disconnect_all_clients_for_handoff(&mut self, import_exe: Option<&std::path::Path>) {
-        let mut reason = "live update in progress; reconnect after handoff completes".to_owned();
-        if let Some(exe) = import_exe {
-            reason.push_str(&format!("; exe={}", exe.display()));
-        }
+    fn disconnect_all_clients_for_handoff(&mut self) {
         let client_ids = self.clients.keys().copied().collect::<Vec<_>>();
         for client_id in client_ids {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
-                    reason: Some(reason.clone()),
+                    reason: Some(
+                        "live update in progress; reconnect after handoff completes".to_owned(),
+                    ),
                 },
             );
             if let Some(client) = self.clients.get_mut(&client_id) {

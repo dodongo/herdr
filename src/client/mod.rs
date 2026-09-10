@@ -134,102 +134,10 @@ use crate::protocol::{self, ClientMessage, FrameData, ServerMessage, MAX_GRAPHIC
 use crate::protocol::{AttachScrollDirection, AttachScrollSource, NotifyKind};
 use crate::server::socket_paths::client_socket_path;
 
-/// Substring of the server's live-update shutdown reason. The replacement
-/// server accepts clients again once its inherited state is ready.
-const HANDOFF_RECONNECT_PHRASE: &str = "reconnect after handoff completes";
-const HANDOFF_RECONNECT_WINDOW: Duration = Duration::from_secs(120);
-/// Set on a re-exec'd client so startup retries while the replacement server
-/// takes ownership of the public socket.
-const HANDOFF_RECONNECT_ENV: &str = "HERDR_HANDOFF_RECONNECT";
-
-fn handoff_exe_from_reason(reason: &str) -> Option<std::path::PathBuf> {
-    reason
-        .split("; ")
-        .find_map(|part| part.strip_prefix("exe="))
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-}
-
-/// Replace this client with the binary used by the replacement server. This
-/// matters when an update installs into a new versioned directory.
-#[cfg(unix)]
-fn reexec_for_handoff(exe: Option<std::path::PathBuf>) -> io::Error {
-    use std::os::unix::process::CommandExt;
-
-    let exe = exe
-        .or_else(|| std::env::current_exe().ok())
-        .unwrap_or_else(|| std::path::PathBuf::from("herdr"));
-    std::process::Command::new(exe)
-        .args(std::env::args_os().skip(1))
-        .env(HANDOFF_RECONNECT_ENV, "1")
-        .exec()
-}
-
 fn run_client_with_mode(
     attach_request: Option<(String, bool)>,
     attach_escape: Option<AttachEscapeState>,
     log_message: &'static str,
-) -> io::Result<()> {
-    let should_quit = Arc::new(AtomicBool::new(false));
-    // ctrlc's "termination" feature also catches SIGTERM/SIGHUP so direct
-    // termination signals still run the quit path and TerminalGuard::Drop.
-    let quit_flag = should_quit.clone();
-    if let Err(err) = ctrlc::set_handler(move || {
-        quit_flag.store(true, Ordering::Release);
-    }) {
-        warn!(%err, "failed to install termination handler; terminal restore relies on TerminalGuard::Drop and the panic hook");
-    }
-
-    // A live handoff is only retryable for the normal client. Direct terminal
-    // attaches have one-shot state and must retain their existing semantics.
-    if attach_request.is_some() || attach_escape.is_some() {
-        return run_client_attempt(attach_request, attach_escape, log_message, should_quit);
-    }
-
-    let mut handoff_deadline = std::env::var_os(HANDOFF_RECONNECT_ENV)
-        .is_some()
-        .then(|| std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
-    loop {
-        match run_client_attempt(None, None, log_message, should_quit.clone()) {
-            Ok(()) => return Ok(()),
-            Err(err) if err.to_string().contains(HANDOFF_RECONNECT_PHRASE) => {
-                if should_quit.load(Ordering::Acquire) {
-                    return Err(err);
-                }
-
-                // Prefer the freshly installed binary so the client and
-                // replacement server speak the same protocol. On platforms
-                // without exec, or if exec fails, reconnect in place below.
-                #[cfg(unix)]
-                {
-                    let exe = handoff_exe_from_reason(&err.to_string());
-                    let exec_err = reexec_for_handoff(exe);
-                    eprintln!(
-                        "herdr: re-exec after live update failed ({exec_err}); reconnecting in place..."
-                    );
-                }
-                eprintln!("herdr: live update in progress; reconnecting...");
-                handoff_deadline = Some(std::time::Instant::now() + HANDOFF_RECONNECT_WINDOW);
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Err(err)
-                if handoff_deadline.is_some_and(|deadline| {
-                    std::time::Instant::now() < deadline && !should_quit.load(Ordering::Acquire)
-                }) =>
-            {
-                eprintln!("herdr: {err}; retrying while the live update completes...");
-                std::thread::sleep(Duration::from_millis(250));
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn run_client_attempt(
-    attach_request: Option<(String, bool)>,
-    attach_escape: Option<AttachEscapeState>,
-    log_message: &'static str,
-    should_quit: Arc<AtomicBool>,
 ) -> io::Result<()> {
     init_logging();
 
@@ -385,6 +293,17 @@ fn run_client_attempt(
         .build()
         .map_err(io::Error::other)?;
 
+    let should_quit = Arc::new(AtomicBool::new(false));
+
+    // ctrlc's "termination" feature also catches SIGTERM/SIGHUP so direct
+    // termination signals still run the quit path and TerminalGuard::Drop.
+    let quit_flag = should_quit.clone();
+    if let Err(err) = ctrlc::set_handler(move || {
+        quit_flag.store(true, Ordering::Release);
+    }) {
+        warn!(%err, "failed to install termination handler; terminal restore relies on TerminalGuard::Drop and the panic hook");
+    }
+
     let result = rt.block_on(async {
         run_client_loop(
             initial,
@@ -407,21 +326,6 @@ fn run_client_attempt(
     if let Err(err) = result {
         let _ = writeln!(io::stderr(), "herdr: {err}");
         rt.shutdown_timeout(Duration::from_millis(100));
-
-        if matches!(
-            &err,
-            ClientError::ServerShutdown { reason: Some(reason) }
-                if reason.contains(HANDOFF_RECONNECT_PHRASE)
-        ) {
-            crate::logging::shutdown("client");
-            if let ClientError::ServerShutdown {
-                reason: Some(reason),
-            } = err
-            {
-                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, reason));
-            }
-        }
-
         crate::logging::shutdown("client");
 
         let detached = matches!(
