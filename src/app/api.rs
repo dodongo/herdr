@@ -694,6 +694,47 @@ impl App {
         }
     }
 
+    pub(crate) fn emit_newly_seen_agent_status_events(&mut self) {
+        for pane_id in std::mem::take(&mut self.state.newly_seen_panes) {
+            let Some(ws_idx) = self
+                .state
+                .workspaces
+                .iter()
+                .position(|ws| ws.pane_state(pane_id).is_some())
+            else {
+                continue;
+            };
+            let ws = &self.state.workspaces[ws_idx];
+            let Some(pane) = ws.pane_state(pane_id) else {
+                continue;
+            };
+            let Some(terminal) = self.state.terminals.get(&pane.attached_terminal_id) else {
+                continue;
+            };
+            let agent_status = pane_agent_status(terminal.state, pane.seen);
+            if agent_status != crate::api::schema::AgentStatus::Idle {
+                continue;
+            }
+            let agent = terminal.effective_agent_label().map(str::to_string);
+            let presentation = terminal.effective_presentation();
+            let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+                continue;
+            };
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PaneAgentStatusChanged,
+                data: crate::api::schema::EventData::PaneAgentStatusChanged {
+                    pane_id: public_pane_id,
+                    workspace_id: self.public_workspace_id(ws_idx),
+                    agent_status,
+                    agent,
+                    title: presentation.title,
+                    display_agent: presentation.display_agent,
+                    state_labels: presentation.state_labels,
+                },
+            });
+        }
+    }
+
     pub(crate) fn sync_toast_deadline(
         &mut self,
         previous_toast: Option<crate::app::state::ToastNotification>,
@@ -2453,5 +2494,80 @@ mod tests {
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
             Some("__herdr_original__ · 1")
         );
+    }
+
+    fn app_with_done_agent_in_second_tab() -> (App, crate::api::EventHub, crate::layout::PaneId) {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        let mut workspace = crate::workspace::Workspace::test_new("done-agent-seen");
+        let second_tab = workspace.test_add_tab(Some("agent"));
+        let pane_id = workspace.tabs[second_tab].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        workspace.tabs[second_tab]
+            .panes
+            .get_mut(&pane_id)
+            .unwrap()
+            .seen = false;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Pi), AgentState::Idle);
+        (app, event_hub, pane_id)
+    }
+
+    fn idle_status_events(
+        app: &App,
+        event_hub: &crate::api::EventHub,
+        pane_id: crate::layout::PaneId,
+    ) -> usize {
+        let public_pane_id = app.public_pane_id(0, pane_id).unwrap();
+        event_hub
+            .events_after(0)
+            .iter()
+            .filter(|(_, event)| {
+                matches!(
+                    &event.data,
+                    crate::api::schema::EventData::PaneAgentStatusChanged {
+                        pane_id,
+                        agent_status: crate::api::schema::AgentStatus::Idle,
+                        ..
+                    } if *pane_id == public_pane_id
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn switching_to_a_done_agent_tab_emits_one_idle_status_event() {
+        let (mut app, event_hub, pane_id) = app_with_done_agent_in_second_tab();
+
+        assert!(app.state.switch_workspace_tab(0, 1));
+        app.emit_newly_seen_agent_status_events();
+        app.emit_newly_seen_agent_status_events();
+
+        assert_eq!(idle_status_events(&app, &event_hub, pane_id), 1);
+    }
+
+    #[test]
+    fn marking_a_visible_done_agent_seen_emits_one_idle_status_event() {
+        let (mut app, event_hub, pane_id) = app_with_done_agent_in_second_tab();
+        app.state.workspaces[0].active_tab = 1;
+
+        assert!(app.state.mark_active_tab_seen());
+        app.emit_newly_seen_agent_status_events();
+        app.emit_newly_seen_agent_status_events();
+
+        assert_eq!(idle_status_events(&app, &event_hub, pane_id), 1);
     }
 }

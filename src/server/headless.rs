@@ -533,6 +533,7 @@ impl HeadlessServer {
                 needs_graphics_render = true;
             }
 
+            self.app.emit_newly_seen_agent_status_events();
             self.drain_client_config_reload_request();
             self.sync_immediate_pty_sources();
             self.stream_host_mouse_capture_mode();

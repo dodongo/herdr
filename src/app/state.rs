@@ -890,6 +890,9 @@ pub struct AppState {
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
+    /// Panes marked seen outside agent state detection, whose `done` status
+    /// becomes `idle` and still needs a `pane.agent_status_changed` event.
+    pub(crate) newly_seen_panes: Vec<PaneId>,
 }
 
 impl AppState {
@@ -1108,6 +1111,7 @@ impl AppState {
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
+            newly_seen_panes: Vec::new(),
         }
     }
 
