@@ -1,6 +1,20 @@
 use super::*;
 
 impl HeadlessServer {
+    pub(super) fn pane_presentation_profile(
+        &self,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<String> {
+        self.app.state.workspaces.iter().find_map(|workspace| {
+            let pane = workspace.pane_state(pane_id)?;
+            self.app
+                .state
+                .terminals
+                .get(&pane.attached_terminal_id)?
+                .presentation_profile()
+        })
+    }
+
     fn pane_effective_state(&self, pane_id: crate::layout::PaneId) -> crate::detect::AgentState {
         self.app
             .state
@@ -123,7 +137,14 @@ impl HeadlessServer {
         let suppress_active_tab_notifications =
             self.active_tab_suppresses_notifications(is_active_tab);
 
-        if !update.suppress_completion && self.app.state.sound.allows(update.known_agent) {
+        let presentation = self.pane_presentation_profile(update.pane_id);
+        if !update.suppress_completion
+            && self
+                .app
+                .state
+                .sound
+                .allows_presentation(update.known_agent, presentation.as_deref())
+        {
             if let Some(sound) = crate::app::actions::notification_sound_for_state_change(
                 suppress_active_tab_notifications,
                 update.previous_state,
@@ -378,9 +399,14 @@ impl HeadlessServer {
 
                 let next_state = self.pane_effective_state(pane_id_val);
 
+                let presentation = self.pane_presentation_profile(pane_id_val);
                 if !suppress_completion
                     && self.app.state.toast_config.delay_seconds == 0
-                    && self.app.state.sound.allows(agent_val)
+                    && self
+                        .app
+                        .state
+                        .sound
+                        .allows_presentation(agent_val, presentation.as_deref())
                 {
                     if let Some(sound) = crate::app::actions::notification_sound_for_state_change(
                         suppress_active_tab_notifications,
@@ -474,7 +500,10 @@ impl HeadlessServer {
 
                 if !suppress_completion
                     && self.app.state.toast_config.delay_seconds == 0
-                    && self.app.state.sound.allows(agent_val)
+                    && self.app.state.sound.allows_presentation(
+                        agent_val,
+                        self.pane_presentation_profile(pane_id_val).as_deref(),
+                    )
                 {
                     if let Some(sound) = crate::app::actions::notification_sound_for_state_change(
                         suppress_active_tab_notifications,

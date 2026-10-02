@@ -2036,6 +2036,13 @@ impl TerminalState {
             })
     }
 
+    pub fn presentation_profile(&self) -> Option<String> {
+        self.metadata_tokens
+            .values()
+            .remove(crate::metadata_tokens::PRESENTATION_TOKEN)
+            .filter(|value| !value.is_empty())
+    }
+
     pub fn effective_agent_label(&self) -> Option<&str> {
         self.hook_authority
             .as_ref()

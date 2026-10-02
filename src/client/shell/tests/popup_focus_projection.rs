@@ -454,7 +454,7 @@ fn focus_loss_releases_active_pane_mouse_before_reporting_focus() {
     let pane = state.hits.panes[0].clone();
 
     let down = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
+        kind: MouseEventKind::Down(MouseButton::Middle),
         column: pane.inner_rect.x + 2,
         row: pane.inner_rect.y + 1,
         modifiers: KeyModifiers::empty(),
@@ -475,7 +475,7 @@ fn focus_loss_releases_active_pane_mouse_before_reporting_focus() {
             &events[..],
             [ClientPaneInputEvent::Mouse {
                 kind: crate::protocol::ClientMouseKind::Up(
-                    crate::protocol::ClientMouseButton::Left
+                    crate::protocol::ClientMouseButton::Middle
                 ),
                 position: ClientMousePosition::Cell { column: 2, row: 1 },
                 ..
@@ -510,7 +510,7 @@ fn pane_mouse_release_survives_popup_open_transition() {
     let pane = state.hits.panes[0].clone();
 
     let down = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
+        kind: MouseEventKind::Down(MouseButton::Middle),
         column: pane.inner_rect.x,
         row: pane.inner_rect.y,
         modifiers: KeyModifiers::empty(),
@@ -523,7 +523,7 @@ fn pane_mouse_release_survives_popup_open_transition() {
 
     state.set_pane_surface(surface_with_popup());
     let up = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Up(MouseButton::Left),
+        kind: MouseEventKind::Up(MouseButton::Middle),
         column: 0,
         row: 0,
         modifiers: KeyModifiers::empty(),
@@ -536,7 +536,7 @@ fn pane_mouse_release_survives_popup_open_transition() {
                     &events[..],
                     [ClientPaneInputEvent::Mouse {
                         kind: crate::protocol::ClientMouseKind::Up(
-                            crate::protocol::ClientMouseButton::Left
+                            crate::protocol::ClientMouseButton::Middle
                         ),
                         ..
                     }]
@@ -734,7 +734,7 @@ fn resize_invalidation_drops_stale_hits_but_preserves_gesture_release() {
     state.compose(106, 20).expect("composed frame");
     let pane = state.hits.panes[0].clone();
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
+        kind: MouseEventKind::Down(MouseButton::Middle),
         column: pane.inner_rect.x + 1,
         row: pane.inner_rect.y + 1,
         modifiers: KeyModifiers::empty(),
@@ -756,7 +756,7 @@ fn resize_invalidation_drops_stale_hits_but_preserves_gesture_release() {
 
     let release =
         state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-            kind: MouseEventKind::Up(MouseButton::Left),
+            kind: MouseEventKind::Up(MouseButton::Middle),
             column: pane.inner_rect.x + 1,
             row: pane.inner_rect.y + 1,
             modifiers: KeyModifiers::empty(),
@@ -769,7 +769,7 @@ fn resize_invalidation_drops_stale_hits_but_preserves_gesture_release() {
                     &events[..],
                     [ClientPaneInputEvent::Mouse {
                         kind: crate::protocol::ClientMouseKind::Up(
-                            crate::protocol::ClientMouseButton::Left
+                            crate::protocol::ClientMouseButton::Middle
                         ),
                         ..
                     }]

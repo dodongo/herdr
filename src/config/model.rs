@@ -270,6 +270,8 @@ pub struct SessionConfig {
     pub resume_agents_on_restore: bool,
     /// Milliseconds between automatic agent restores. Zero disables spacing.
     pub startup_per_agent_delay_ms: u32,
+    /// Create a workspace when an attached client has none. Default: true.
+    pub auto_create_default_workspace: bool,
 }
 
 impl Default for SessionConfig {
@@ -277,6 +279,7 @@ impl Default for SessionConfig {
         Self {
             resume_agents_on_restore: true,
             startup_per_agent_delay_ms: 100,
+            auto_create_default_workspace: true,
         }
     }
 }
@@ -1430,15 +1433,18 @@ new_cwd = "~/Projects"
         let default_config = Config::default();
         assert!(default_config.session.resume_agents_on_restore);
         assert_eq!(default_config.session.startup_per_agent_delay_ms, 100);
+        assert!(default_config.session.auto_create_default_workspace);
 
         let toml = r#"
 [session]
 resume_agents_on_restore = false
 startup_per_agent_delay_ms = 0
+auto_create_default_workspace = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
         assert_eq!(config.session.startup_per_agent_delay_ms, 0);
+        assert!(!config.session.auto_create_default_workspace);
     }
 
     #[test]

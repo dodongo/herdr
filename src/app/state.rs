@@ -820,6 +820,7 @@ pub struct AppState {
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
     // Config
+    pub auto_create_default_workspace: bool,
     pub prefix_keys: Vec<(KeyCode, KeyModifiers)>,
     /// Virtual terminal size (columns, rows) used when no client is attached.
     pub(crate) headless_size: (u16, u16),
@@ -888,6 +889,9 @@ pub struct AppState {
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
+    /// Panes marked seen outside agent state detection, whose `done` status
+    /// becomes `idle` and still needs a `pane.agent_status_changed` event.
+    pub(crate) newly_seen_panes: Vec<PaneId>,
 }
 
 impl AppState {
@@ -1045,6 +1049,7 @@ impl AppState {
             toast: None,
             pending_agent_notifications: std::collections::HashMap::new(),
             outer_terminal_focus: None,
+            auto_create_default_workspace: true,
             prefix_keys: vec![(KeyCode::Char('b'), KeyModifiers::CONTROL)],
             headless_size: (
                 crate::config::DEFAULT_HEADLESS_COLS,
@@ -1104,6 +1109,7 @@ impl AppState {
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
+            newly_seen_panes: Vec::new(),
         }
     }
 

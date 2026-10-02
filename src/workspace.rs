@@ -448,15 +448,22 @@ impl Workspace {
         )
     }
 
-    pub fn switch_tab(&mut self, idx: usize) {
+    /// Activates the tab at `idx`, marks its panes seen, and returns the panes
+    /// that were unseen before the switch.
+    pub fn switch_tab(&mut self, idx: usize) -> Vec<PaneId> {
+        let mut newly_seen = Vec::new();
         if idx < self.tabs.len() {
             self.active_tab = idx;
             if let Some(tab) = self.tabs.get_mut(idx) {
-                for pane in tab.panes.values_mut() {
-                    pane.seen = true;
+                for (&pane_id, pane) in &mut tab.panes {
+                    if !pane.seen {
+                        pane.seen = true;
+                        newly_seen.push(pane_id);
+                    }
                 }
             }
         }
+        newly_seen
     }
 
     pub fn create_tab(

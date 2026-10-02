@@ -301,6 +301,10 @@ pub fn auto_detect_launch(saved_federation: bool) -> io::Result<()> {
             format!("cannot attach without a usable terminal: {err}; run inside a terminal"),
         )
     })?;
+    if std::env::var_os(crate::client::handoff::RECONNECT_ENV).is_some() {
+        // The replacement server owns startup; the re-exec'd client only retries attachment.
+        return crate::client::run_client();
+    }
     let socket_path = client_socket_path();
     info!(path = %socket_path.display(), "auto-detect launch starting");
 

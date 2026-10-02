@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -20,6 +21,9 @@ pub struct SoundConfig {
     /// Relative paths are resolved from the config file's directory.
     pub request_path: Option<PathBuf>,
     pub agents: AgentSoundOverrides,
+    /// Named presentation profiles selected by a pane's `p_presentation`
+    /// metadata token; a profile wins over the detected agent's setting.
+    pub profiles: BTreeMap<String, AgentSoundSetting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -60,11 +64,21 @@ pub enum AgentSoundSetting {
 
 impl SoundConfig {
     pub fn allows(&self, agent: Option<Agent>) -> bool {
+        self.enabled && !matches!(self.agents.for_agent(agent), AgentSoundSetting::Off)
+    }
+
+    pub fn allows_presentation(&self, agent: Option<Agent>, profile: Option<&str>) -> bool {
         if !self.enabled {
             return false;
         }
 
-        !matches!(self.agents.for_agent(agent), AgentSoundSetting::Off)
+        profile
+            .and_then(|profile| self.profiles.get(profile).copied())
+            .filter(|setting| *setting != AgentSoundSetting::Default)
+            .map_or_else(
+                || self.allows(agent),
+                |setting| setting != AgentSoundSetting::Off,
+            )
     }
 
     pub fn path_for(&self, sound: crate::sound::Sound) -> Option<PathBuf> {
@@ -159,6 +173,7 @@ impl Default for SoundConfig {
             done_path: None,
             request_path: None,
             agents: AgentSoundOverrides::default(),
+            profiles: BTreeMap::new(),
         }
     }
 }
@@ -198,6 +213,35 @@ mod tests {
 
     use super::*;
     use crate::config::{config_path, Config};
+
+    #[test]
+    fn presentation_profile_overrides_agent_and_global_sound_policy() {
+        let config: Config = toml::from_str(
+            r#"
+[ui.sound]
+enabled = true
+
+[ui.sound.agents]
+pi = "off"
+
+[ui.sound.profiles]
+subagent = "on"
+quiet = "off"
+defaulted = "default"
+"#,
+        )
+        .unwrap();
+        let sound = &config.ui.sound;
+        assert!(!sound.allows(Some(Agent::Pi)));
+        assert!(sound.allows_presentation(Some(Agent::Pi), Some("subagent")));
+        assert!(!sound.allows_presentation(Some(Agent::Pi), Some("quiet")));
+        assert!(!sound.allows_presentation(Some(Agent::Pi), Some("defaulted")));
+        assert!(!sound.allows_presentation(Some(Agent::Pi), Some("missing")));
+
+        let mut disabled = sound.clone();
+        disabled.enabled = false;
+        assert!(!disabled.allows_presentation(Some(Agent::Pi), Some("subagent")));
+    }
 
     #[test]
     fn sound_table_config_parses() {

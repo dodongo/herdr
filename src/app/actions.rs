@@ -394,7 +394,8 @@ impl AppState {
             self.mark_session_dirty();
             if let Some(ws) = self.workspaces.get_mut(idx) {
                 let active_tab = ws.active_tab;
-                ws.switch_tab(active_tab);
+                let newly_seen = ws.switch_tab(active_tab);
+                self.newly_seen_panes.extend(newly_seen);
                 let tab_id =
                     public_tab_id_for_index(ws, active_tab).unwrap_or_else(|| workspace_id.clone());
                 crate::logging::tab_focused(&workspace_id, &tab_id);
@@ -425,7 +426,8 @@ impl AppState {
         }
         self.mark_session_dirty();
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-            ws.switch_tab(tab_idx);
+            let newly_seen = ws.switch_tab(tab_idx);
+            self.newly_seen_panes.extend(newly_seen);
             let tab_id =
                 public_tab_id_for_index(ws, tab_idx).unwrap_or_else(|| workspace_id.clone());
             crate::logging::tab_focused(&workspace_id, &tab_id);
@@ -463,9 +465,10 @@ impl AppState {
         };
 
         let mut changed = false;
-        for pane in tab.panes.values_mut() {
+        for (&pane_id, pane) in &mut tab.panes {
             if !pane.seen {
                 pane.seen = true;
+                self.newly_seen_panes.push(pane_id);
                 changed = true;
             }
         }
@@ -1923,8 +1926,11 @@ impl AppState {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
         let suppress_active_tab_notifications =
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
-        let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
-            .filter(|_| self.sound.allows(known_agent));
+        let presentation = terminal_state.presentation_profile();
+        let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications).filter(|_| {
+            self.sound
+                .allows_presentation(known_agent, presentation.as_deref())
+        });
         let build_toast = || {
             let workspace_label =
                 self.workspaces[ws_idx].display_name_from_terminals(&self.terminals);

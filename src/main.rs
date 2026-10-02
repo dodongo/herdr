@@ -395,6 +395,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # resume_agents_on_restore = true
 # Milliseconds between automatic agent restores; 0 starts them without spacing.
 # startup_per_agent_delay_ms = 100
+# Create a workspace automatically when an attached client has none.
+# auto_create_default_workspace = true
 
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.

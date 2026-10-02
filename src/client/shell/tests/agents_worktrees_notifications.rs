@@ -1462,3 +1462,57 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
 }
+
+#[test]
+fn semantic_notification_sound_effect_keeps_presentation_profile_context() {
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.toast_delivery = crate::config::ToastDelivery::Herdr;
+    config.toast_delay_seconds = 0;
+    let mut state = ClientShellState::new(config);
+    let mut projected = snapshot();
+    projected.agents.push(ClientShellAgent {
+        pane_id: "pane_2".into(),
+        workspace_id: "ws_2".into(),
+        tab_id: "tab_2".into(),
+        name: None,
+        display_agent: Some("codex".into()),
+        agent: Some("codex".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Blocked,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: vec![(
+            crate::metadata_tokens::PRESENTATION_TOKEN.into(),
+            "quiet".into(),
+        )],
+        focused: false,
+    });
+    state.set_snapshot(Box::new(projected));
+
+    let (effects, _) = state.receive_notification(
+        &ClientEndpointId::Local,
+        SemanticNotification {
+            kind: SemanticNotificationKind::NeedsAttention,
+            title: "codex needs attention".into(),
+            body: None,
+            sound: Some(SemanticNotificationSound::Request),
+            agent: Some("codex".into()),
+            workspace_id: Some("ws_2".into()),
+            tab_id: Some("tab_2".into()),
+            pane_id: Some("pane_2".into()),
+            position: None,
+        },
+        std::time::Instant::now(),
+    );
+
+    assert!(matches!(
+        effects.as_slice(),
+        [ClientShellNotificationEffect::Sound {
+            agent: Some(agent),
+            presentation: Some(presentation),
+            ..
+        }] if agent == "codex" && presentation == "quiet"
+    ));
+}

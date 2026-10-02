@@ -26,6 +26,7 @@ mod events;
 mod frame_output;
 #[cfg(test)]
 mod frame_output_tests;
+pub(crate) mod handoff;
 mod handshake;
 mod image_files;
 mod input;
@@ -223,74 +224,81 @@ fn run_client_with_mode(
         endpoint::EndpointCatalog::default()
     };
     let federated = endpoint_catalog.has_enabled_ssh();
+    let handoff_allowed = client_rendered_shell
+        && attach_escape.is_none()
+        && !federated
+        && !is_remote_client_process();
 
-    let initial_stream = match crate::ipc::connect_local_stream(&socket_path) {
-        Ok(stream) => Some(stream),
-        Err(error) if federated => {
-            warn!(%error, "Local is unavailable; keeping saved machines available");
-            None
-        }
-        Err(error) => {
-            return Err(io::Error::other(
-                ClientError::ConnectionFailed(error).to_string(),
-            ));
-        }
+    let should_quit = Arc::new(AtomicBool::new(false));
+    let quit_flag = should_quit.clone();
+    if let Err(err) = ctrlc::set_handler(move || {
+        quit_flag.store(true, Ordering::Release);
+    }) {
+        warn!(%err, "failed to install termination handler; terminal restore relies on TerminalGuard::Drop and the panic hook");
+    }
+    let handoff_retry = std::env::var_os(handoff::RECONNECT_ENV).is_some();
+    std::env::remove_var(handoff::RECONNECT_ENV);
+    let retry_window = if handoff_retry && handoff_allowed {
+        handoff::RECONNECT_WINDOW
+    } else {
+        Duration::ZERO
     };
 
-    // Get the terminal geometry before handshake (before raw mode).
-    let (cols, rows, cell_width_px, cell_height_px, exact_cell_size) =
-        initial_terminal_geometry(pixel_geometry_enabled, kitty_graphics_enabled)?;
-
-    let shell_surface_size = loop_config
-        .shell_config
-        .as_ref()
-        .map(|shell| shell.initial_surface_size(cols, rows));
     // Healthy Local attaches directly; only an actual failure enters background recovery.
-    let initial = initial_stream
-        .map(|mut stream| {
-            let handshake = do_handshake(
-                &mut stream,
-                cols,
-                rows,
-                cell_width_px,
-                cell_height_px,
-                exact_cell_size,
-                shell_surface_size,
-                endpoint_keybindings,
-                loop_config.mouse_capture_active,
-                true,
-                !is_remote_client_process(),
+    let initial = handoff::connect(retry_window, &should_quit, || {
+        let mut stream = crate::ipc::connect_local_stream(&socket_path)
+            .map_err(|error| io::Error::other(ClientError::ConnectionFailed(error).to_string()))?;
+        let geometry = initial_terminal_geometry(pixel_geometry_enabled, kitty_graphics_enabled)?;
+        let (cols, rows, cell_width_px, cell_height_px, exact_cell_size) = geometry;
+        let shell_surface_size = loop_config
+            .shell_config
+            .as_ref()
+            .map(|shell| shell.initial_surface_size(cols, rows));
+        let handshake = do_handshake(
+            &mut stream,
+            cols,
+            rows,
+            cell_width_px,
+            cell_height_px,
+            exact_cell_size,
+            shell_surface_size,
+            endpoint_keybindings,
+            loop_config.mouse_capture_active,
+            true,
+            !is_remote_client_process(),
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?;
+        if federated
+            && !endpoint::EndpointNegotiation::new(
+                handshake.endpoint_methods.clone().unwrap_or_default(),
+                handshake.endpoint_capabilities.clone().unwrap_or_default(),
             )
-            .map_err(|error| io::Error::other(error.to_string()))?;
-            if federated
-                && !endpoint::EndpointNegotiation::new(
-                    handshake.endpoint_methods.clone().unwrap_or_default(),
-                    handshake.endpoint_capabilities.clone().unwrap_or_default(),
-                )
-                .supports_surface_interest()
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "Local needs a server update before it can participate in multi-machine viewing",
-                ));
-            }
-            if let Some((terminal_id, takeover)) = attach_request {
-                write_to_server(
-                    &mut stream,
-                    &ClientMessage::AttachTerminal {
-                        terminal_id,
-                        takeover,
-                    },
-                )?;
-            }
-            Ok((stream, handshake))
-        })
-        .transpose();
-    let initial = match initial {
-        Ok(initial) => initial,
+            .supports_surface_interest()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Local needs a server update before it can participate in multi-machine viewing",
+            ));
+        }
+        if let Some((terminal_id, takeover)) = &attach_request {
+            write_to_server(
+                &mut stream,
+                &ClientMessage::AttachTerminal {
+                    terminal_id: terminal_id.clone(),
+                    takeover: *takeover,
+                },
+            )?;
+        }
+        Ok(((stream, handshake), geometry))
+    });
+    let (initial, (cols, rows, cell_width_px, cell_height_px, exact_cell_size)) = match initial {
+        Ok((initial, geometry)) => (Some(initial), geometry),
         Err(error) if federated => {
             warn!(%error, "Local handshake failed; keeping saved machines available");
-            None
+            (
+                None,
+                initial_terminal_geometry(pixel_geometry_enabled, kitty_graphics_enabled)?,
+            )
         }
         Err(error) => return Err(error),
     };
@@ -324,17 +332,6 @@ fn run_client_with_mode(
         .build()
         .map_err(io::Error::other)?;
 
-    let should_quit = Arc::new(AtomicBool::new(false));
-
-    // ctrlc's "termination" feature also catches SIGTERM/SIGHUP so direct
-    // termination signals still run the quit path and TerminalGuard::Drop.
-    let quit_flag = should_quit.clone();
-    if let Err(err) = ctrlc::set_handler(move || {
-        quit_flag.store(true, Ordering::Release);
-    }) {
-        warn!(%err, "failed to install termination handler; terminal restore relies on TerminalGuard::Drop and the panic hook");
-    }
-
     let result = rt.block_on(async {
         run_client_loop(
             initial,
@@ -359,6 +356,18 @@ fn run_client_with_mode(
         let _ = writeln!(io::stderr(), "herdr: {err}");
         rt.shutdown_timeout(Duration::from_millis(100));
         crate::logging::shutdown("client");
+
+        #[cfg(unix)]
+        if handoff_allowed {
+            if let ClientError::ServerShutdown {
+                reason: Some(reason),
+            } = &err
+            {
+                if handoff::requested(reason) {
+                    return Err(handoff::reexec(reason));
+                }
+            }
+        }
 
         let detached = matches!(
             &err,

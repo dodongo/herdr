@@ -409,14 +409,31 @@ where
 {
     let rows_by_agent = BTreeMap::<String, AgentSidebarRows>::deserialize(deserializer)?;
     for (id, rows) in &rows_by_agent {
+        // Keys are canonical agent ids or presentation profile names (selected
+        // by a pane's p_presentation metadata token).
         if crate::detect::parse_canonical_agent_label(id).is_none() {
-            return Err(serde::de::Error::custom(format!(
-                "unknown canonical agent id `{id}` in sidebar rows_by_agent"
-            )));
+            // An agent alias or miscased id is a typo for the canonical id, not a profile.
+            let aliases_agent = crate::detect::parse_agent_label(id).is_some();
+            if aliases_agent || !is_profile_name(id) {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown agent id or presentation profile `{id}` in sidebar rows_by_agent"
+                )));
+            }
         }
         validate_sidebar_rows(rows).map_err(serde::de::Error::custom)?;
     }
     Ok(rows_by_agent)
+}
+
+fn is_profile_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '_'
+                || character == '-'
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -430,9 +447,17 @@ pub struct AgentsSidebarConfig {
 }
 
 impl AgentsSidebarConfig {
-    pub(crate) fn rows_for_agent(&self, agent: Option<Agent>) -> &AgentSidebarRows {
-        agent
-            .and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+    /// Rows for a pane: a presentation profile wins, then the detected agent.
+    pub(crate) fn rows_for(
+        &self,
+        agent: Option<Agent>,
+        profile: Option<&str>,
+    ) -> &AgentSidebarRows {
+        profile
+            .and_then(|profile| self.rows_by_agent.get(profile))
+            .or_else(|| {
+                agent.and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
+            })
             .unwrap_or(&self.rows)
     }
 }
@@ -703,6 +728,36 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
     }
 
     #[test]
+    fn accepts_presentation_profile_keys_and_rejects_malformed_ones() {
+        let input = "[ui.sidebar.agents.rows_by_agent]\nsubagent = [[\"agent\"]]\n";
+        let config = toml::from_str::<crate::config::Config>(input).unwrap();
+        assert_eq!(
+            config
+                .ui
+                .sidebar
+                .agents
+                .rows_for(Some(Agent::Pi), Some("subagent")),
+            &vec![vec![AgentSidebarToken::Agent]]
+        );
+        assert_eq!(
+            config
+                .ui
+                .sidebar
+                .agents
+                .rows_for(Some(Agent::Pi), Some("other")),
+            &config.ui.sidebar.agents.rows
+        );
+        let oversized = "x".repeat(33);
+        for key in ["Sub Agent", "\"has space\"", oversized.as_str()] {
+            let input = format!("[ui.sidebar.agents.rows_by_agent]\n{key} = [[\"agent\"]]\n");
+            assert!(
+                toml::from_str::<crate::config::Config>(&input).is_err(),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
     fn accepts_every_canonical_agent_override_key() {
         let agents = Agent::ALL;
         let entries = agents
@@ -717,8 +772,8 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
     }
 
     #[test]
-    fn rejects_alias_case_whitespace_and_unknown_override_keys() {
-        for key in ["claude-code", "Claude", "' claude '", "unknown"] {
+    fn rejects_alias_case_and_whitespace_override_keys() {
+        for key in ["claude-code", "Claude", "' claude '", "'Sub Agent'"] {
             let input = format!("[ui.sidebar.agents.rows_by_agent]\n{key} = [[\"agent\"]]\n");
             assert!(
                 toml::from_str::<crate::config::Config>(&input).is_err(),

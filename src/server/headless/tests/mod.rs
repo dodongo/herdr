@@ -267,6 +267,36 @@ fn pane_updated_events(event_hub: &api::EventHub) -> usize {
         .count()
 }
 
+#[cfg(unix)]
+#[test]
+fn handoff_shutdown_names_import_binary_for_clients() {
+    let mut server = test_headless_server();
+    let (writer, control_rx, _render_rx) = test_client_writer();
+    server.clients.insert(
+        1,
+        ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(writer),
+        ),
+    );
+    server.disconnect_all_clients_for_handoff(Some(std::path::Path::new("/opt/herdr/herdr")));
+    assert_eq!(
+        read_server_shutdown_reason(
+            control_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("handoff shutdown message")
+        ),
+        Some(
+            "live update in progress; reconnect after handoff completes; exe=/opt/herdr/herdr"
+                .into()
+        )
+    );
+    shutdown_test_runtimes(&mut server);
+}
+
 #[test]
 fn server_stop_interrupts_server_event_backlog() {
     let mut server = test_headless_server();

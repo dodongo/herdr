@@ -889,7 +889,7 @@ impl ClientShellState {
                 match mouse.kind {
                     MouseEventKind::Down(button) => {
                         self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
-                        if hit.mouse_reporting {
+                        if hit.mouse_reporting && Self::pane_mouse_button_available(&hit) {
                             self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
                                 last_position: self.pane_mouse_position(&hit, mouse),
                                 hit,
@@ -1727,11 +1727,40 @@ impl ClientShellState {
         }
         if mouse.kind == MouseEventKind::Up(MouseButton::Left) && self.selection.is_some() {
             self.stop_selection_autoscroll();
+            let selection_pane_id = self
+                .selection
+                .as_ref()
+                .map(|selection| selection.pane_id.clone());
+            let selection_hit = self
+                .hits
+                .panes
+                .iter()
+                .find(|hit| {
+                    selection_pane_id
+                        .as_ref()
+                        .is_some_and(|pane_id| hit.pane_id == pane_id.as_str())
+                        && super::contains(hit.inner_rect, point)
+                })
+                .cloned();
+            let was_click = self
+                .selection
+                .as_ref()
+                .is_some_and(crate::selection::Selection::is_just_click);
             let copied = self
                 .selection
                 .as_mut()
                 .is_some_and(crate::selection::Selection::finish);
-            if copied && self.config.copy_on_select {
+            if was_click {
+                if let Some(hit) = selection_hit {
+                    if hit.mouse_reporting && Self::pane_mouse_button_available(&hit) {
+                        let mut down = mouse;
+                        down.kind = MouseEventKind::Down(MouseButton::Left);
+                        self.push_pane_mouse_event(&hit, down, down.modifiers, outcome);
+                        self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
+                    }
+                }
+                self.selection = None;
+            } else if copied && self.config.copy_on_select {
                 self.request_selection_copy(outcome, true);
                 self.selection = None;
             } else if self
@@ -1776,6 +1805,7 @@ impl ClientShellState {
                         .right_click_passthrough_modifiers
                         .filter(|modifiers| *modifiers == mouse.modifiers);
                     if hit.mouse_reporting
+                        && Self::pane_mouse_button_available(&hit)
                         && (pane_owns_right_click || configured_modifiers.is_some())
                     {
                         let stripped_modifiers =
@@ -2202,16 +2232,7 @@ impl ClientShellState {
                     .find(|hit| super::contains(hit.rect, point))
                     .cloned();
                 if let Some(hit) = pane_hit {
-                    if hit.mouse_reporting && super::contains(hit.inner_rect, point) {
-                        self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
-                        self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
-                            last_position: self.pane_mouse_position(&hit, mouse),
-                            hit: hit.clone(),
-                            button: MouseButton::Left,
-                            stripped_modifiers: crossterm::event::KeyModifiers::empty(),
-                            last_event: mouse,
-                        });
-                    } else if super::contains(hit.inner_rect, point) {
+                    if super::contains(hit.inner_rect, point) {
                         let click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
                             viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),
@@ -2254,7 +2275,11 @@ impl ClientShellState {
                     .hits
                     .panes
                     .iter()
-                    .find(|hit| super::contains(hit.inner_rect, point) && hit.mouse_reporting)
+                    .find(|hit| {
+                        super::contains(hit.inner_rect, point)
+                            && hit.mouse_reporting
+                            && Self::pane_mouse_button_available(hit)
+                    })
                     .cloned()
                 {
                     self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
@@ -2334,6 +2359,11 @@ impl ClientShellState {
         }
     }
 
+    fn pane_mouse_button_available(hit: &PaneHit) -> bool {
+        hit.scroll
+            .is_none_or(|metrics| metrics.offset_from_bottom == 0)
+    }
+
     pub(super) fn push_pane_mouse_event(
         &self,
         hit: &PaneHit,
@@ -2341,6 +2371,12 @@ impl ClientShellState {
         modifiers: crossterm::event::KeyModifiers,
         outcome: &mut ClientShellInput,
     ) {
+        // A scrolled-back pane cannot start application button capture. Keep
+        // drag and release events flowing so an existing capture can close.
+        if matches!(mouse.kind, MouseEventKind::Down(_)) && !Self::pane_mouse_button_available(hit)
+        {
+            return;
+        }
         let Some(kind) = crate::protocol::ClientMouseKind::from_crossterm(mouse.kind) else {
             return;
         };

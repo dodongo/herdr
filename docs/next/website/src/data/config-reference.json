@@ -1177,6 +1177,12 @@
           "description": "Optional mp3 file path for \"request\" notifications. Relative paths are resolved from the config file's directory."
         },
         {
+          "key": "ui.sound.profiles",
+          "type": "table",
+          "default": "{}",
+          "description": "Named sound overrides selected by pane p_presentation metadata. Values are default, on, or off. Explicit overrides take precedence over detected-agent settings; the global sound enabled switch still applies."
+        },
+        {
           "key": "ui.sound.agents.pi",
           "type": "enum",
           "default": "\"default\"",
@@ -1435,6 +1441,12 @@
           "type": "integer",
           "default": "100",
           "description": "Milliseconds between automatic agent restores after a server restart. The first agent starts without this delay; 0 disables spacing. Does not delay manual launches or explicit terminal attaches. Restart the server to apply."
+        },
+        {
+          "key": "session.auto_create_default_workspace",
+          "type": "boolean",
+          "default": "true",
+          "description": "Create a workspace automatically when an attached client has none."
         }
       ]
     },

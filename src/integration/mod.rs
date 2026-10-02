@@ -33,9 +33,9 @@ pub(crate) use types::{
 /// agent registry provides first-class target registration.
 pub(crate) const EXPERIMENTAL_INTEGRATION_TARGET_LABELS: &[&str] = &["letta"];
 
-const PI_EXTENSION_INSTALL_NAME: &str = "herdr-agent-state.ts";
+const PI_EXTENSION_INSTALL_NAME: &str = "p-herdr-agent-state.ts";
 const PI_EXTENSION_ASSET: &str = include_str!("assets/pi/herdr-agent-state.ts");
-const PI_INTEGRATION_VERSION: u32 = 9;
+const PI_INTEGRATION_VERSION: u32 = 12;
 const OMP_EXTENSION_INSTALL_NAME: &str = "herdr-omp-agent-state.ts";
 const OMP_EXTENSION_ASSET: &str = include_str!("assets/omp/herdr-agent-state.ts");
 const OMP_INTEGRATION_VERSION: u32 = 10;
