@@ -81,6 +81,7 @@ fn worktree_create(args: &[String]) -> std::io::Result<i32> {
     let mut label = None;
     let mut focus = false;
     let mut trust_repository = false;
+    let mut pane_id = None;
 
     let mut index = 0;
     while index < args.len() {
@@ -99,6 +100,14 @@ fn worktree_create(args: &[String]) -> std::io::Result<i32> {
                     return Ok(2);
                 };
                 cwd = Some(normalize_path_arg(value)?);
+                index += 2;
+            }
+            "--pane" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --pane");
+                    return Ok(2);
+                };
+                pane_id = Some(super::normalize_pane_id(value));
                 index += 2;
             }
             "--branch" => {
@@ -154,7 +163,7 @@ fn worktree_create(args: &[String]) -> std::io::Result<i32> {
     }
     if workspace_id.is_some() && cwd.is_some() {
         eprintln!(
-            "usage: herdr worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--focus] [--no-focus] [--trust-repository]"
+            "usage: herdr worktree create [--workspace ID | --cwd PATH] [--branch NAME] [--base REF] [--path PATH] [--label TEXT] [--pane ID] [--focus] [--no-focus] [--trust-repository]"
         );
         return Ok(2);
     }
@@ -168,6 +177,7 @@ fn worktree_create(args: &[String]) -> std::io::Result<i32> {
         label,
         focus,
         trust_repository,
+        pane_id,
     })
 }
 

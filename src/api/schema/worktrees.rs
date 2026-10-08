@@ -28,6 +28,9 @@ pub struct WorktreeCreateParams {
     pub focus: bool,
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub trust_repository: bool,
+    /// Move this existing pane into the new workspace as its first tab instead of starting a new pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]

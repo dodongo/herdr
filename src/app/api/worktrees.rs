@@ -812,6 +812,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_worktree_create_moves_pane_into_linked_workspace() {
+        let repo = create_committed_repo("api-worktree-create-pane-repo");
+        let worktree_root = unique_temp_path("api-worktree-create-pane-root");
+        let event_hub = crate::api::EventHub::default();
+        let mut app = test_app_with_event_hub(event_hub.clone());
+        let mut parent = Workspace::test_new("main");
+        parent.identity_cwd = repo.clone();
+        let agent_tab_idx = parent.test_add_tab(Some("main/abc"));
+        let agent_pane = parent.tabs[agent_tab_idx].root_pane;
+        let agent_terminal = parent.tabs[agent_tab_idx]
+            .terminal_id(agent_pane)
+            .unwrap()
+            .clone();
+        app.state.workspaces = vec![parent];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.worktree_directory = worktree_root.clone();
+        let workspace_id = app.state.workspaces[0].id.clone();
+        let agent_pane_id = app.public_pane_id(0, agent_pane).unwrap();
+
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::WorktreeCreate(WorktreeCreateParams {
+                    workspace_id: Some(workspace_id),
+                    branch: Some("worktree/api-pane".into()),
+                    pane_id: Some(agent_pane_id),
+                    ..WorktreeCreateParams::default()
+                }),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorktreeCreated {
+            workspace,
+            tab,
+            root_pane,
+            worktree,
+        } = success.result
+        else {
+            panic!("expected worktree_created response");
+        };
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+        let moved = &app.state.workspaces[1];
+        assert_eq!(moved.tabs.len(), 1);
+        assert_eq!(moved.tabs[0].custom_name.as_deref(), Some("main/abc"));
+        assert_eq!(
+            moved.tabs[0].terminal_id(moved.tabs[0].root_pane),
+            Some(&agent_terminal)
+        );
+        assert_eq!(tab.label, "main/abc");
+        assert_eq!(root_pane.workspace_id, workspace.workspace_id);
+        assert_eq!(
+            worktree.open_workspace_id.as_deref(),
+            Some(workspace.workspace_id.as_str())
+        );
+        assert!(workspace.worktree.unwrap().is_linked_worktree);
+
+        let checkout = moved.worktree_space().unwrap().checkout_path.clone();
+        assert_eq!(app.state.terminals[&agent_terminal].cwd, repo);
+        assert_eq!(
+            moved.resolved_identity_cwd_from(&app.state.terminals, &app.terminal_runtimes),
+            Some(checkout.clone())
+        );
+        assert_eq!(
+            moved.display_name_from_terminals(&app.state.terminals),
+            crate::workspace::fallback_label_from_cwd(&checkout)
+        );
+
+        let kinds = event_hub
+            .events_after(0)
+            .into_iter()
+            .map(|(_, event)| event.event)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|event| **event == EventKind::WorkspaceCreated)
+                .count(),
+            1
+        );
+        assert_eq!(kinds.last(), Some(&EventKind::WorktreeCreated));
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let remove = crate::worktree::build_worktree_remove_command(&repo, &checkout, false, false);
+        crate::worktree::run_worktree_command(&remove).unwrap();
+        let _ = std::fs::remove_dir_all(worktree_root);
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
+    async fn api_worktree_create_refuses_to_move_last_pane_of_workspace() {
+        let repo = create_committed_repo("api-worktree-create-last-pane-repo");
+        let worktree_root = unique_temp_path("api-worktree-create-last-pane-root");
+        let mut app = app_with_parent(&repo);
+        app.state.worktree_directory = worktree_root.clone();
+        let only_pane = app.state.workspaces[0].tabs[0].root_pane;
+        let pane_id = app.public_pane_id(0, only_pane).unwrap();
+
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "req".into(),
+                method: crate::api::schema::Method::WorktreeCreate(WorktreeCreateParams {
+                    branch: Some("worktree/api-last-pane".into()),
+                    pane_id: Some(pane_id),
+                    ..WorktreeCreateParams::default()
+                }),
+            },
+        );
+
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "pane_move_failed");
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert!(!worktree_root.exists());
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[tokio::test]
     async fn deferred_api_worktree_create_preserves_event_and_plugin_context() {
         let repo = create_committed_repo("api-worktree-create-deferred-repo");
         let worktree_root = unique_temp_path("api-worktree-create-deferred-root");
@@ -1041,6 +1165,7 @@ mod tests {
                 repo_name: "herdr".into(),
                 label: None,
                 focus: false,
+                pane_id: None,
                 respond_to,
             }),
             result: Ok(()),
@@ -2340,6 +2465,7 @@ mod tests {
                     label: None,
                     focus: false,
                     trust_repository: false,
+                    pane_id: None,
                 }),
             },
             respond_to,

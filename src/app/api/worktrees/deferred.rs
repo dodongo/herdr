@@ -2,8 +2,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::api::schema::{
-    EventData, EventEnvelope, EventKind, Request, ResponseResult, WorktreeCreateParams,
-    WorktreeRemoveParams,
+    EventData, EventEnvelope, EventKind, PaneMoveDestination, PaneMoveParams, PaneMoveResult,
+    Request, ResponseResult, WorktreeCreateParams, WorktreeRemoveParams,
 };
 use crate::app::App;
 use crate::events::{ApiWorktreeAddRequest, ApiWorktreeRemoveRequest, AppEvent};
@@ -44,6 +44,26 @@ impl App {
         let id = self.next_api_worktree_operation_id;
         self.next_api_worktree_operation_id = self.next_api_worktree_operation_id.saturating_add(1);
         id
+    }
+
+    /// A pane moved into a new worktree workspace must leave its own workspace non-empty, so the
+    /// source workspace, which may be the worktree's parent, stays open.
+    fn check_worktree_pane_can_move(&self, pane_id: &str) -> Result<(), (&'static str, String)> {
+        let Some((ws_idx, _)) = self.parse_pane_id(pane_id) else {
+            return Err(("pane_not_found", format!("pane {pane_id} not found")));
+        };
+        let pane_count: usize = self.state.workspaces[ws_idx]
+            .tabs
+            .iter()
+            .map(|tab| tab.layout.pane_count())
+            .sum();
+        if pane_count <= 1 {
+            return Err((
+                "pane_move_failed",
+                format!("pane {pane_id} is the last pane in its workspace"),
+            ));
+        }
+        Ok(())
     }
 
     fn api_create_source_workspace_idx(&self, api: &ApiWorktreeAddRequest) -> Option<usize> {
@@ -122,6 +142,12 @@ impl App {
             return;
         }
         let base = params.base.unwrap_or_else(|| "HEAD".into());
+        if let Some(pane_id) = params.pane_id.as_deref() {
+            if let Err((code, message)) = self.check_worktree_pane_can_move(pane_id) {
+                Self::send_api_response(respond_to, encode_error(id, code, message));
+                return;
+            }
+        }
         let source = match self.resolve_worktree_source(params.workspace_id, params.cwd) {
             Ok(source) => source,
             Err(err) => {
@@ -188,6 +214,7 @@ impl App {
             repo_name: source.repo_name,
             label: params.label,
             focus: params.focus,
+            pane_id: params.pane_id,
             respond_to,
         };
         let path = checkout_path;
@@ -421,6 +448,51 @@ impl App {
                     self.state.switch_workspace(ws_idx);
                 }
                 (ws_idx, false)
+            } else if let Some(pane_id) = api.pane_id.clone() {
+                // The pane move announces the new workspace, tab, and pane itself.
+                let moved_workspace_id = self
+                    .check_worktree_pane_can_move(&pane_id)
+                    .map_err(|(_, message)| message)
+                    .and_then(|()| {
+                        let tab_label = self.parse_pane_id(&pane_id).and_then(|(ws_idx, pane)| {
+                            let workspace = &self.state.workspaces[ws_idx];
+                            workspace
+                                .find_tab_index_for_pane(pane)
+                                .and_then(|tab_idx| workspace.tabs[tab_idx].custom_name.clone())
+                        });
+                        match self.move_pane(PaneMoveParams {
+                            pane_id: pane_id.clone(),
+                            destination: PaneMoveDestination::NewWorkspace {
+                                label: None,
+                                tab_label,
+                            },
+                            focus: api.focus,
+                        }) {
+                            Ok(PaneMoveResult {
+                                created_workspace: Some(workspace),
+                                ..
+                            }) => Ok(workspace.workspace_id),
+                            Ok(_) => Err(format!("pane {pane_id} could not be moved")),
+                            Err(err) => Err(err.message),
+                        }
+                    });
+                match moved_workspace_id.and_then(|workspace_id| {
+                    self.parse_workspace_id(&workspace_id)
+                        .ok_or_else(|| format!("workspace {workspace_id} disappeared"))
+                }) {
+                    Ok(ws_idx) => (ws_idx, false),
+                    Err(err) => {
+                        Self::send_api_response(
+                            api.respond_to,
+                            encode_error(
+                                api.id,
+                                "worktree_open_failed",
+                                format!("created worktree but failed to move pane: {err}"),
+                            ),
+                        );
+                        return;
+                    }
+                }
             } else {
                 match self.create_workspace_with_options(result.path.clone(), api.focus) {
                     Ok(ws_idx) => (ws_idx, true),

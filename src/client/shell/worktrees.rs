@@ -272,6 +272,7 @@ impl ClientShellState {
                 label: None,
                 focus: false,
                 trust_repository: false,
+                pane_id: None,
             }),
             PendingEndpointKind::WorktreeCreate,
             outcome,

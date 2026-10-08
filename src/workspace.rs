@@ -1012,7 +1012,19 @@ impl Workspace {
 
     #[cfg(test)]
     pub fn resolved_identity_cwd(&self) -> Option<PathBuf> {
-        Some(self.identity_cwd.clone())
+        Some(
+            self.linked_worktree_checkout()
+                .unwrap_or(&self.identity_cwd)
+                .clone(),
+        )
+    }
+
+    /// A linked worktree workspace is identified by its checkout, wherever its panes run.
+    fn linked_worktree_checkout(&self) -> Option<&PathBuf> {
+        self.worktree_space
+            .as_ref()
+            .filter(|membership| membership.is_linked_worktree)
+            .map(|membership| &membership.checkout_path)
     }
 
     pub fn resolved_identity_cwd_from(
@@ -1020,6 +1032,9 @@ impl Workspace {
         terminals: &HashMap<TerminalId, TerminalState>,
         terminal_runtimes: &TerminalRuntimeRegistry,
     ) -> Option<PathBuf> {
+        if let Some(checkout) = self.linked_worktree_checkout() {
+            return Some(checkout.clone());
+        }
         self.tabs
             .first()
             .and_then(|tab| tab.cwd_for_pane(tab.root_pane, terminals, terminal_runtimes))
@@ -1043,13 +1058,14 @@ impl Workspace {
             return name.clone();
         }
 
-        let cwd = self
-            .tabs
-            .first()
-            .and_then(|tab| tab.terminal_id(tab.root_pane))
-            .and_then(|terminal_id| terminals.get(terminal_id))
-            .map(|terminal| &terminal.cwd)
-            .unwrap_or(&self.identity_cwd);
+        let cwd = self.linked_worktree_checkout().unwrap_or_else(|| {
+            self.tabs
+                .first()
+                .and_then(|tab| tab.terminal_id(tab.root_pane))
+                .and_then(|terminal_id| terminals.get(terminal_id))
+                .map(|terminal| &terminal.cwd)
+                .unwrap_or(&self.identity_cwd)
+        });
         self.automatic_display_name_for_cwd(cwd)
     }
 

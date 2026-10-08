@@ -242,6 +242,7 @@ fn worktree_command() -> Command {
                 .arg(option("base", "REF"))
                 .arg(path_option("path", "PATH"))
                 .arg(option("label", "TEXT"))
+                .arg(option("pane", "ID"))
                 .arg(flag("focus"))
                 .arg(flag("no-focus"))
                 .arg(flag("trust-repository")),

@@ -4580,6 +4580,13 @@
                 "null"
               ]
             },
+            "pane_id": {
+              "description": "Move this existing pane into the new workspace as its first tab instead of starting a new pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "path": {
               "type": [
                 "string",

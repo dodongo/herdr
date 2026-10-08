@@ -297,6 +297,13 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
+        // worktree.create gained the optional pane_id field.
+        let mut expected = expected;
+        expected.remove("worktree.create");
+        assert_eq!(
+            actual.remove("worktree.create").as_deref(),
+            Some("b05615178a496493763cbf74a8e10a60823671defaf700f94e6de21e2ea9c5f3")
+        );
 
         assert_eq!(
             actual, expected,
