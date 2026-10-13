@@ -56,7 +56,16 @@ pub(crate) fn render_collapsed_sidebar(
     let selection_background = workspace_selection_background(palette);
     let active_background = workspace_active_background(palette, selected_workspace_id.is_some());
     render_sidebar_background(buffer, area, palette);
-    let (workspace_area, divider_y, detail_area) = collapsed_sidebar_sections(area);
+    let (workspace_area, divider_y, detail_area) = if config.spaces.visible {
+        collapsed_sidebar_sections(area)
+    } else {
+        let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+        (
+            Rect::new(content.x, content.y, content.width, 0),
+            None,
+            content,
+        )
+    };
     for (index, workspace) in snapshot
         .workspaces
         .iter()
@@ -211,6 +220,10 @@ pub(crate) fn render_sidebar(
     } else {
         Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
     };
+    if !config.spaces.visible {
+        render_agents_only_sidebar(buffer, area, snapshot, config, state, hits);
+        return;
+    }
     let (workspace_area, detail_area) =
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
@@ -391,43 +404,13 @@ pub(crate) fn render_sidebar(
             " new",
             Style::default().fg(palette.overlay0),
         );
-        let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(launcher_width),
-            footer_y,
-            launcher_width,
-            1,
+        render_global_launcher(
+            buffer,
+            Rect::new(workspace_area.x, footer_y, workspace_area.width, 1),
+            snapshot,
+            palette,
+            hits,
         );
-        if attention {
-            let start_x = workspace_area.right().saturating_sub(6);
-            put_text(
-                buffer,
-                start_x,
-                footer_y,
-                2,
-                "● ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            put_text(
-                buffer,
-                start_x.saturating_add(2),
-                footer_y,
-                4,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        } else {
-            put_right_text(
-                buffer,
-                workspace_area,
-                footer_y,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        }
     }
 
     super::render_agent_panel(
@@ -438,7 +421,108 @@ pub(crate) fn render_sidebar(
         state.agent_scroll,
         hits,
     );
+    render_collapse_toggle(buffer, area, palette, hits);
+}
 
+fn render_agents_only_sidebar(
+    buffer: &mut Buffer,
+    area: Rect,
+    snapshot: &ClientShellSnapshot,
+    config: &ClientShellConfig,
+    state: &mut ShellRenderState<'_>,
+    hits: &mut ShellHitMap,
+) {
+    let palette = &config.palette;
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    let footer_y = content.bottom().saturating_sub(1);
+    super::render_agent_panel(
+        buffer,
+        Rect::new(
+            content.x,
+            content.y,
+            content.width,
+            content.height.saturating_sub(1),
+        ),
+        snapshot,
+        config,
+        state.agent_scroll,
+        hits,
+    );
+    // The panel's top rule separates it from Spaces, which this layout omits.
+    if content.height > 0 {
+        put_text(
+            buffer,
+            content.x,
+            content.y,
+            content.width,
+            &" ".repeat(content.width as usize),
+            Style::default(),
+        );
+    }
+    if config.mouse_capture && content.height > 1 {
+        render_global_launcher(
+            buffer,
+            Rect::new(content.x, footer_y, content.width.saturating_sub(2), 1),
+            snapshot,
+            palette,
+            hits,
+        );
+    }
+    render_collapse_toggle(buffer, area, palette, hits);
+}
+
+fn render_global_launcher(
+    buffer: &mut Buffer,
+    row: Rect,
+    snapshot: &ClientShellSnapshot,
+    palette: &Palette,
+    hits: &mut ShellHitMap,
+) {
+    let attention = super::super::global_menu::global_menu_attention(snapshot);
+    let launcher_width = if attention { 8 } else { 6 }.min(row.width);
+    hits.global_launcher = Rect::new(
+        row.right().saturating_sub(launcher_width),
+        row.y,
+        launcher_width,
+        1,
+    );
+    if attention {
+        let start_x = row.right().saturating_sub(6);
+        put_text(
+            buffer,
+            start_x,
+            row.y,
+            2,
+            "● ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        put_text(
+            buffer,
+            start_x.saturating_add(2),
+            row.y,
+            4,
+            "menu",
+            Style::default().fg(palette.overlay0),
+        );
+    } else {
+        put_right_text(
+            buffer,
+            row,
+            row.y,
+            "menu",
+            Style::default().fg(palette.overlay0),
+        );
+    }
+}
+
+fn render_collapse_toggle(
+    buffer: &mut Buffer,
+    area: Rect,
+    palette: &Palette,
+    hits: &mut ShellHitMap,
+) {
     hits.sidebar_toggle = Rect::new(
         area.right().saturating_sub(2),
         area.bottom().saturating_sub(1),

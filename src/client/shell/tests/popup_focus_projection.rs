@@ -148,6 +148,37 @@ fn non_overlay_ctrl_v_is_forwarded_to_the_focused_pane() {
 }
 
 #[test]
+fn hidden_spaces_give_the_sidebar_to_agents_and_keep_the_menu() {
+    let mut config = Config::default();
+    config.ui.sidebar.spaces.visible = false;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(106, 20).expect("composed frame");
+    let rows = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let sidebar = |row: &str| row.chars().take(25).collect::<String>();
+    assert!(!rows.iter().any(|row| sidebar(row).contains("spaces")));
+    assert!(
+        sidebar(&rows[1]).starts_with(" agents"),
+        "agents start at the top"
+    );
+    assert!(!sidebar(&rows[0]).contains('─'), "no rule above the agents");
+    assert!(sidebar(&rows[19]).contains("menu"));
+    assert_eq!(state.hits.global_launcher.y, 19);
+    assert_eq!(state.hits.sidebar_section_divider, Rect::default());
+    assert!(state.hits.workspaces.is_empty());
+}
+
+#[test]
 fn desktop_composition_keeps_shell_outside_origin_relative_surface() {
     let config = ClientShellConfig::from_config(&Config::default());
     let mut state = ClientShellState::new(config);
