@@ -12,6 +12,8 @@ use crate::terminal::TerminalId;
 
 #[path = "metadata.rs"]
 mod metadata;
+#[cfg(unix)]
+pub(crate) use metadata::HandoffPresentation;
 pub use metadata::{AgentMetadata, AgentMetadataReport, EffectivePresentation};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

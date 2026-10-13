@@ -12,6 +12,15 @@ pub(crate) struct MetadataTokens {
     entries: HashMap<String, MetadataToken>,
 }
 
+/// A token carried across a server handoff, with its remaining lifetime in place of a deadline.
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HandoffToken {
+    key: String,
+    value: String,
+    remaining: Option<Duration>,
+}
+
 pub(crate) const MAX_SEQUENCE_SOURCES: usize = 32;
 pub(crate) const PRESENTATION_TOKEN: &str = "p_presentation";
 
@@ -87,6 +96,42 @@ impl MetadataTokens {
             .iter()
             .map(|(key, token)| (key.clone(), token.value.clone()))
             .collect()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn handoff_tokens(&self, now: Instant) -> Vec<HandoffToken> {
+        self.entries
+            .iter()
+            .filter(|(_, token)| token.expires_at.is_none_or(|deadline| deadline > now))
+            .map(|(key, token)| HandoffToken {
+                key: key.clone(),
+                value: token.value.clone(),
+                remaining: token
+                    .expires_at
+                    .map(|deadline| deadline.saturating_duration_since(now)),
+            })
+            .collect()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn from_handoff(tokens: Vec<HandoffToken>, now: Instant) -> Self {
+        Self {
+            entries: tokens
+                .into_iter()
+                .map(|token| {
+                    let expires_at = token
+                        .remaining
+                        .map(|remaining| now.checked_add(remaining).unwrap_or(now));
+                    (
+                        token.key,
+                        MetadataToken {
+                            value: token.value,
+                            expires_at,
+                        },
+                    )
+                })
+                .collect(),
+        }
     }
 
     pub(crate) fn next_expiry(&self) -> Option<Instant> {

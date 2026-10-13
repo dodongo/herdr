@@ -579,6 +579,10 @@ fn restore_tab(
         let handoff_agent_state = imported_runtime
             .as_ref()
             .and_then(|imported| imported.state.agent_state.clone());
+        #[cfg(unix)]
+        let handoff_presentation = imported_runtime
+            .as_ref()
+            .and_then(|imported| imported.state.presentation.clone());
         let pending_native_agent_restore = if was_imported {
             None
         } else {
@@ -720,6 +724,10 @@ fn restore_tab(
                 #[cfg(unix)]
                 if let Some(agent_state) = handoff_agent_state {
                     terminal.restore_handoff_agent_state(agent_state);
+                }
+                #[cfg(unix)]
+                if let Some(presentation) = handoff_presentation {
+                    terminal.restore_handoff_presentation(presentation);
                 }
                 panes.insert(*id, PaneState::new(terminal_id.clone()));
                 terminal_runtimes.insert(terminal_id, runtime);
@@ -1904,6 +1912,24 @@ mod tests {
                 Some(1),
             );
             assert_eq!(terminal.state, state_before_handoff);
+            terminal.set_agent_metadata(crate::terminal::state::AgentMetadataReport {
+                source: "herdr:pi".into(),
+                agent_label: Some("pi".into()),
+                applies_to_source: None,
+                title: None,
+                display_agent: Some("cO5.5/H".into()),
+                state_labels: HashMap::new(),
+                clear_title: false,
+                clear_display_agent: false,
+                clear_state_labels: false,
+                ttl: None,
+                seq: Some(7),
+            });
+            terminal.metadata_tokens.patch(
+                HashMap::from([("worktree".to_string(), Some("dotfiles/5".to_string()))]),
+                None,
+                std::time::Instant::now(),
+            );
             let runtimes = crate::terminal::TerminalRuntimeRegistry::from(runtimes);
             let snapshot = crate::persist::capture(&workspaces, &terminals, &runtimes, Some(0), 0);
             let pane_id = workspaces[0].tabs[0].panes.keys().next().copied().unwrap();
@@ -1913,6 +1939,7 @@ mod tests {
                 .unwrap();
             let mut state = runtime.handoff_runtime_state(pane_id.raw());
             state.agent_state = terminals.values().next().unwrap().handoff_agent_state();
+            state.presentation = Some(terminals.values().next().unwrap().handoff_presentation());
             let state = serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
             let mut imports = HashMap::from([(
                 pane_id.raw(),
@@ -1936,6 +1963,20 @@ mod tests {
             drop(runtimes);
             let terminal = restored_terminals.values_mut().next().unwrap();
             assert_eq!(terminal.state, state_before_handoff);
+            assert_eq!(
+                terminal.effective_display_agent().as_deref(),
+                Some("cO5.5/H"),
+                "the row keeps its reported label"
+            );
+            assert_eq!(
+                terminal.metadata_tokens.values(),
+                HashMap::from([("worktree".to_string(), "dotfiles/5".to_string())]),
+                "the row keeps its reported tokens"
+            );
+            assert!(
+                !terminal.metadata_report_sequence_is_fresh("herdr:pi", Some(7)),
+                "a report the old server applied stays applied"
+            );
             terminal.set_detected_state(Some(crate::detect::Agent::Pi), AgentState::Idle);
             assert_eq!(
                 terminal.state, state_before_handoff,
