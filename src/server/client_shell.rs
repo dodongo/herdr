@@ -24,7 +24,12 @@ pub(super) fn snapshot_with_completions(
     protocol::ClientShellSnapshot,
     protocol::endpoint::EndpointAgentCompletions,
 ) {
-    let snapshot = app.session_metadata_snapshot();
+    let mut snapshot = app.session_metadata_snapshot();
+    let mut agent_order = crate::ui::agent_panel_entries_from(&app.state, &app.terminal_runtimes)
+        .into_iter()
+        .filter_map(|entry| app.public_pane_id(entry.ws_idx, entry.pane_id))
+        .collect();
+    app.apply_held_agents(&mut snapshot.agents, &mut agent_order);
     let completions = protocol::endpoint::EndpointAgentCompletions {
         boot_id: boot_id.to_owned(),
         revision,
@@ -182,11 +187,6 @@ pub(super) fn snapshot_with_completions(
         .agent_view_override
         .as_ref()
         .map(|view| view.label.clone().unwrap_or_else(|| "filtered".to_owned()));
-    let agent_order = crate::ui::agent_panel_entries_from(&app.state, &app.terminal_runtimes)
-        .into_iter()
-        .filter_map(|entry| app.public_pane_id(entry.ws_idx, entry.pane_id))
-        .collect();
-
     let zoomed = focused_tab_id
         .as_deref()
         .and_then(|tab_id| app.parse_tab_id(tab_id))

@@ -1535,12 +1535,14 @@ impl App {
             match self.state.held_terminals.get_mut(&terminal_id) {
                 Some(held) if now < held.until => held.until = now + timeout,
                 _ => {
+                    let agent = self.held_agent(ws_idx, pane_id);
                     self.state.held_terminals.insert(
                         terminal_id,
                         crate::app::state::HeldTerminalDisplay {
                             buffer,
                             alternate_screen,
                             until: now + timeout,
+                            agent,
                         },
                     );
                 }

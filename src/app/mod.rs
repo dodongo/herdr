@@ -2639,6 +2639,56 @@ mod tests {
         assert_eq!(held_text(&app), "new");
     }
 
+    #[tokio::test]
+    async fn pane_hold_keeps_the_agent_entry_until_released() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-hold-agent");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.terminal_runtimes.insert(
+            terminal_id.clone(),
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(8, 2, b"old"),
+        );
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(crate::detect::Agent::Pi);
+        terminal.state = AgentState::Idle;
+        let held = app.collect_agent_infos();
+        let hold = |app: &mut App, timeout_ms| {
+            app.handle_api_request(crate::api::schema::Request {
+                id: "req_pane_hold".into(),
+                method: crate::api::schema::Method::PaneHold(crate::api::schema::PaneHoldParams {
+                    pane_id: pane_id.clone(),
+                    timeout_ms,
+                }),
+            });
+        };
+        let shown = |app: &App| {
+            let mut agents = app.collect_agent_infos();
+            let mut order = Vec::new();
+            app.apply_held_agents(&mut agents, &mut order);
+            (agents, order)
+        };
+
+        hold(&mut app, 60_000);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .clear_agent_runtime_identity_after_respawn();
+        assert!(app.collect_agent_infos().is_empty());
+        assert_eq!(shown(&app), (held, vec![pane_id.clone()]));
+
+        hold(&mut app, 0);
+        assert_eq!(shown(&app), (Vec::new(), Vec::new()));
+    }
+
     #[test]
     fn terminal_and_agent_targets_treat_terminal_ids_differently() {
         let mut app = test_app();

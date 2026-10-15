@@ -793,6 +793,16 @@ pub(crate) struct HeldTerminalDisplay {
     pub(crate) buffer: ratatui::buffer::Buffer,
     pub(crate) alternate_screen: bool,
     pub(crate) until: std::time::Instant,
+    /// The pane's agent sidebar entry when the hold began, shown in its place.
+    pub(crate) agent: Option<HeldAgent>,
+}
+
+/// An agent sidebar entry frozen by `pane.hold`, with where it stood in the
+/// agent list and the agent view order.
+pub(crate) struct HeldAgent {
+    pub(crate) info: crate::api::schema::AgentInfo,
+    pub(crate) index: usize,
+    pub(crate) order_index: Option<usize>,
 }
 
 pub struct AppState {

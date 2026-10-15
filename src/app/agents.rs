@@ -36,6 +36,54 @@ impl App {
             .collect()
     }
 
+    pub(super) fn held_agent(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<crate::app::state::HeldAgent> {
+        let info = self.agent_info(ws_idx, pane_id)?;
+        let index = self
+            .collect_agent_infos()
+            .iter()
+            .position(|agent| agent.pane_id == info.pane_id)?;
+        let order_index = crate::ui::agent_panel_entries_from(&self.state, &self.terminal_runtimes)
+            .iter()
+            .position(|entry| entry.ws_idx == ws_idx && entry.pane_id == pane_id);
+        Some(crate::app::state::HeldAgent {
+            info,
+            index,
+            order_index,
+        })
+    }
+
+    /// Show each held pane's agent entry as it was when its hold began, so a
+    /// process restarting under the hold does not drop or relabel the entry.
+    pub(crate) fn apply_held_agents(
+        &self,
+        agents: &mut Vec<crate::api::schema::AgentInfo>,
+        agent_order: &mut Vec<String>,
+    ) {
+        let now = std::time::Instant::now();
+        for held in self
+            .state
+            .held_terminals
+            .values()
+            .filter(|held| now < held.until)
+            .filter_map(|held| held.agent.as_ref())
+        {
+            let pane_id = &held.info.pane_id;
+            match agents.iter().position(|agent| &agent.pane_id == pane_id) {
+                Some(index) => agents[index] = held.info.clone(),
+                None => agents.insert(held.index.min(agents.len()), held.info.clone()),
+            }
+            if let Some(order_index) = held.order_index {
+                if !agent_order.contains(pane_id) {
+                    agent_order.insert(order_index.min(agent_order.len()), pane_id.clone());
+                }
+            }
+        }
+    }
+
     pub(super) fn reconcile_managed_agent_target(&mut self, target: &str) {
         let Ok(resolved) = self.resolve_agent_target(target) else {
             return;
