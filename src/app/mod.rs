@@ -137,8 +137,9 @@ pub struct App {
     pub(crate) pending_api_worktree_removes: HashMap<String, u64>,
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
     pub(crate) pending_worktree_remove_runtime_exits: HashMap<crate::layout::PaneId, usize>,
-    /// Launch settings `pane.respawn` registered, with when they lapse: a pane's
-    /// process exiting before then starts its next process in the same pane.
+    /// Launch settings `pane.respawn` registered while it ends a pane's processes,
+    /// with when they lapse: the pane's exit before then starts its next process
+    /// in the same pane.
     pub(crate) pending_pane_respawns: HashMap<crate::layout::PaneId, (Instant, PaneRespawn)>,
     pub(crate) pending_worktree_remove_runtime_restores: HashMap<crate::layout::PaneId, u64>,
     pub(crate) next_api_worktree_operation_id: u64,

@@ -545,10 +545,8 @@ fn pane_command() -> Command {
         )
         .subcommand(
             Command::new("respawn")
-                .about("Restart a pane's next exiting process in place")
+                .about("Restart a pane's process in place")
                 .arg(required("pane_id", "PANE_ID"))
-                .arg(option("timeout-ms", "N"))
-                .arg(flag("cancel"))
                 .arg(path_option("cwd", "PATH"))
                 .arg(env_option()),
         )

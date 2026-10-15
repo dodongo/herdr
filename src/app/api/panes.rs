@@ -1564,9 +1564,12 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if self.state.terminal_id_for_pane(ws_idx, pane_id).is_none() {
+        let Some(terminal_id) = self.state.terminal_id_for_pane(ws_idx, pane_id) else {
             return pane_not_found(id, &params.pane_id);
-        }
+        };
+        let Some(runtime) = self.terminal_runtimes.get(&terminal_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
         let env = match super::env::normalize_launch_env(params.env) {
             Ok(env) => env,
             Err((code, message)) => return encode_error(id, &code, message),
@@ -1575,14 +1578,12 @@ impl App {
         if cwd.as_ref().is_some_and(|cwd| !cwd.is_dir()) {
             return encode_error(id, "invalid_cwd", "cwd is not a directory");
         }
-        if params.timeout_ms == 0 {
-            self.pending_pane_respawns.remove(&pane_id);
-        } else {
-            let until =
-                std::time::Instant::now() + std::time::Duration::from_millis(params.timeout_ms);
-            self.pending_pane_respawns
-                .insert(pane_id, (until, crate::app::PaneRespawn { cwd, env }));
-        }
+        // The termination escalates to SIGKILL within a second; the lapse only
+        // keeps a pane whose exit never arrives from respawning much later.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        self.pending_pane_respawns
+            .insert(pane_id, (until, crate::app::PaneRespawn { cwd, env }));
+        runtime.terminate_processes();
         encode_success(id, ResponseResult::Ok {})
     }
 

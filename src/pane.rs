@@ -3846,6 +3846,17 @@ impl PaneRuntime {
         (pid > 0).then_some(pid)
     }
 
+    /// Ends the pane's process session on a background thread, escalating from
+    /// SIGHUP to SIGKILL, so the pane's exit follows as for any other death.
+    pub(crate) fn terminate_processes(&self) {
+        let pane_id = self.pane_id;
+        let child_pid = self.child_pid.load(Ordering::Acquire);
+        let child_wait_completed = self.child_wait_completed.clone();
+        std::thread::spawn(move || {
+            shutdown_pane_processes(pane_id, child_pid, child_wait_completed.as_deref());
+        });
+    }
+
     pub fn follow_cwd(&self) -> Option<std::path::PathBuf> {
         #[cfg(unix)]
         {

@@ -594,6 +594,10 @@ impl TerminalRuntime {
         self.0.child_pid()
     }
 
+    pub(crate) fn terminate_processes(&self) {
+        self.0.terminate_processes();
+    }
+
     pub(crate) fn current_size(&self) -> (u16, u16) {
         self.0.current_size()
     }

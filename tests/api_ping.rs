@@ -74,7 +74,6 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
     panic!("socket did not appear at {}", path.display());
 }
 
-#[cfg(target_os = "linux")]
 fn wait_for_path(path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -2652,6 +2651,102 @@ fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
     assert_eq!(expiry_event["data"]["agent_status"], "working");
     assert_eq!(expiry_event["data"]["agent"], "pi");
     assert!(expiry_event["data"]["title"].is_null());
+
+    cleanup_spawned_herdr(child, base);
+}
+
+#[test]
+fn pane_respawn_restarts_the_pane_process_in_place() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let next_cwd = base.join("next");
+    let output = base.join("respawned");
+    fs::create_dir_all(&next_cwd).unwrap();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "respawn_ws",
+            "method": "workspace.create",
+            "params": { "cwd": base.display().to_string(), "focus": true },
+        })
+        .to_string(),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let shell_pid = |socket_path: &Path| {
+        send_request(
+            socket_path,
+            &serde_json::json!({
+                "id": "respawn_info",
+                "method": "pane.process_info",
+                "params": { "pane_id": pane_id },
+            })
+            .to_string(),
+        )["result"]["process_info"]["shell_pid"]
+            .as_u64()
+    };
+    let first_pid = shell_pid(&socket_path).expect("pane should report its shell");
+
+    let respawned = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "respawn",
+            "method": "pane.respawn",
+            "params": {
+                "pane_id": pane_id,
+                "cwd": next_cwd.display().to_string(),
+                "env": { "RESPAWN_MARK": "fresh" },
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(respawned["result"]["type"], "ok");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while shell_pid(&socket_path).is_none_or(|pid| pid == first_pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "pane should get a new shell"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let command = format!(
+        "printf '%s %s' \"$RESPAWN_MARK\" \"$PWD\" > {}",
+        output.display()
+    );
+    for (id, method, params) in [
+        (
+            "respawn_text",
+            "pane.send_text",
+            serde_json::json!({ "pane_id": pane_id, "text": command }),
+        ),
+        (
+            "respawn_enter",
+            "pane.send_keys",
+            serde_json::json!({ "pane_id": pane_id, "keys": ["Enter"] }),
+        ),
+    ] {
+        let answer = send_request(
+            &socket_path,
+            &serde_json::json!({ "id": id, "method": method, "params": params }).to_string(),
+        );
+        assert_eq!(answer["result"]["type"], "ok");
+    }
+    wait_for_path(&output, Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        fs::read_to_string(&output).unwrap(),
+        format!("fresh {}", fs::canonicalize(&next_cwd).unwrap().display())
+    );
 
     cleanup_spawned_herdr(child, base);
 }

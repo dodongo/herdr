@@ -3127,7 +3127,7 @@
           "type": "object"
         },
         "PaneRespawnParams": {
-          "description": "Start the default shell in the same pane when the pane's process exits\nwithin `timeout_ms`, instead of closing the pane; 0 cancels.",
+          "description": "End the pane's processes and start the default shell in the same pane.",
           "properties": {
             "cwd": {
               "type": [
@@ -3143,16 +3143,10 @@
             },
             "pane_id": {
               "type": "string"
-            },
-            "timeout_ms": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             }
           },
           "required": [
-            "pane_id",
-            "timeout_ms"
+            "pane_id"
           ],
           "type": "object"
         },

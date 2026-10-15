@@ -448,22 +448,13 @@ fn pane_hold(args: &[String]) -> std::io::Result<i32> {
 }
 
 const PANE_RESPAWN_USAGE: &str =
-    "usage: herdr pane respawn <pane_id> --timeout-ms N [--cwd PATH] [--env KEY=VALUE]...|--cancel";
+    "usage: herdr pane respawn <pane_id> [--cwd PATH] [--env KEY=VALUE]...";
 
 fn pane_respawn(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first().filter(|arg| !arg.starts_with("--")) else {
         eprintln!("{PANE_RESPAWN_USAGE}");
         return Ok(2);
     };
-    if args.len() == 2 && args[1] == "--cancel" {
-        return super::send_ok_request(Method::PaneRespawn(PaneRespawnParams {
-            pane_id: super::normalize_pane_id(raw_pane_id),
-            timeout_ms: 0,
-            cwd: None,
-            env: std::collections::HashMap::new(),
-        }));
-    }
-    let mut timeout_ms = None;
     let mut cwd = None;
     let mut env = std::collections::HashMap::new();
     let mut rest = args[1..].iter();
@@ -473,7 +464,6 @@ fn pane_respawn(args: &[String]) -> std::io::Result<i32> {
             return Ok(2);
         };
         match flag.as_str() {
-            "--timeout-ms" => timeout_ms = value.parse::<u64>().ok().filter(|ms| *ms > 0),
             "--cwd" => cwd = Some(value.clone()),
             "--env" => match super::parse_env_assignment(value) {
                 Ok((key, value)) => {
@@ -490,13 +480,8 @@ fn pane_respawn(args: &[String]) -> std::io::Result<i32> {
             }
         }
     }
-    let Some(timeout_ms) = timeout_ms else {
-        eprintln!("{PANE_RESPAWN_USAGE}");
-        return Ok(2);
-    };
     super::send_ok_request(Method::PaneRespawn(PaneRespawnParams {
         pane_id: super::normalize_pane_id(raw_pane_id),
-        timeout_ms,
         cwd,
         env,
     }))
@@ -1760,9 +1745,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
     eprintln!("  herdr pane hold <pane_id> --timeout-ms N|--release");
-    eprintln!(
-        "  herdr pane respawn <pane_id> --timeout-ms N [--cwd PATH] [--env KEY=VALUE]...|--cancel"
-    );
+    eprintln!("  herdr pane respawn <pane_id> [--cwd PATH] [--env KEY=VALUE]...");
     eprintln!("  herdr pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
     eprintln!("  herdr pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
     eprintln!(
