@@ -178,6 +178,29 @@ impl App {
             return self.handle_api_worktree_remove_finished(*result);
         }
 
+        if let AppEvent::PaneDied { pane_id, .. } = &ev {
+            if let Some((_, launch)) = self
+                .pending_pane_respawns
+                .remove(pane_id)
+                .filter(|(until, _)| Instant::now() < *until)
+            {
+                let previous_toast = self.state.toast.clone();
+                if let Some(update) = self
+                    .state
+                    .publish_pane_process_exit_if_agent(*pane_id, false)
+                {
+                    self.sync_full_lifecycle_authority_detection_pauses();
+                    self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
+                    self.emit_pane_state_update(&update);
+                }
+                if self.respawn_pane_shell(*pane_id, false, launch) {
+                    self.render_dirty.request_generic();
+                    self.render_notify.notify_one();
+                    return Vec::new();
+                }
+            }
+        }
+
         let mut worktree_restore_updates = Vec::new();
         if let AppEvent::PaneDied { pane_id, .. } = &ev {
             if self
@@ -557,6 +580,22 @@ impl App {
         pane_id: crate::layout::PaneId,
         focus_pane: bool,
     ) -> bool {
+        self.respawn_pane_shell(
+            pane_id,
+            focus_pane,
+            super::PaneRespawn {
+                cwd: None,
+                env: Vec::new(),
+            },
+        )
+    }
+
+    fn respawn_pane_shell(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        focus_pane: bool,
+        launch: super::PaneRespawn,
+    ) -> bool {
         let Some((ws_idx, pane_state)) = self.find_pane(pane_id) else {
             return false;
         };
@@ -565,13 +604,13 @@ impl App {
             return false;
         };
 
-        let cwd = terminal.cwd.clone();
+        let cwd = launch.cwd.unwrap_or_else(|| terminal.cwd.clone());
         let (rows, cols) = self
             .terminal_runtimes
             .get(&terminal_id)
             .map(|runtime| runtime.current_size())
             .unwrap_or_else(|| self.state.estimate_pane_size());
-        let Some(launch_env) = self.pane_launch_env(ws_idx, pane_id, Vec::new()) else {
+        let Some(launch_env) = self.pane_launch_env(ws_idx, pane_id, launch.env) else {
             return false;
         };
         let runtime = match crate::terminal::TerminalRuntime::spawn(
@@ -1196,6 +1235,8 @@ impl App {
                 return self.handle_pane_link_activate(request.id, params);
             }
             Method::PaneRename(params) => return self.handle_pane_rename(request.id, params),
+            Method::PaneHold(params) => return self.handle_pane_hold(request.id, params),
+            Method::PaneRespawn(params) => return self.handle_pane_respawn(request.id, params),
             Method::PaneRead(params) => return self.handle_pane_read(request.id, params),
             Method::PaneReportAgent(params) => {
                 return self.handle_pane_report_agent(request.id, params);

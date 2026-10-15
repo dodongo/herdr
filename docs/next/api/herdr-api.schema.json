@@ -2598,6 +2598,24 @@
           ],
           "type": "object"
         },
+        "PaneHoldParams": {
+          "description": "Freeze what clients see of a pane for `timeout_ms`; 0 releases the hold.",
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pane_id",
+            "timeout_ms"
+          ],
+          "type": "object"
+        },
         "PaneInputSetParams": {
           "properties": {
             "pane_id": {
@@ -3105,6 +3123,36 @@
           },
           "required": [
             "direction"
+          ],
+          "type": "object"
+        },
+        "PaneRespawnParams": {
+          "description": "Start the default shell in the same pane when the pane's process exits\nwithin `timeout_ms`, instead of closing the pane; 0 cancels.",
+          "properties": {
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pane_id",
+            "timeout_ms"
           ],
           "type": "object"
         },
@@ -5864,6 +5912,38 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneRenameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.hold",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneHoldParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.respawn",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneRespawnParams"
             }
           },
           "required": [

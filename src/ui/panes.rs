@@ -33,8 +33,8 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
 
 // Full view computation reaches this helper for active and background panes.
 // Keep terminal queries narrow, allocation-free, and short under the core lock.
-fn terminal_inner_rect(rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
-    if !pane_scrollbars || pane_inner.width <= 4 || rt.alternate_screen_active() {
+fn terminal_inner_rect(alternate_screen: bool, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
+    if !pane_scrollbars || pane_inner.width <= 4 || alternate_screen {
         return pane_inner;
     }
 
@@ -183,10 +183,11 @@ fn runtime_for_tab_pane<'a>(
 
 fn stable_scrollbar_gutter(
     rt: &TerminalRuntime,
+    alternate_screen: bool,
     pane_inner: Rect,
     pane_scrollbars: bool,
 ) -> (Rect, Option<Rect>) {
-    let inner_rect = terminal_inner_rect(rt, pane_inner, pane_scrollbars);
+    let inner_rect = terminal_inner_rect(alternate_screen, pane_inner, pane_scrollbars);
     if inner_rect == pane_inner {
         return (inner_rect, None);
     }
@@ -226,7 +227,8 @@ pub(super) fn resize_tab_panes(
                 Borders::NONE
             };
             let pane_inner = pane_inner_rect(area, borders);
-            let inner_rect = terminal_inner_rect(rt, pane_inner, app.pane_scrollbars);
+            let alternate_screen = app.terminal_alternate_screen_active(Some(terminal_id), rt);
+            let inner_rect = terminal_inner_rect(alternate_screen, pane_inner, app.pane_scrollbars);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
                 rt.resize(
                     inner_rect.height,
@@ -250,7 +252,8 @@ pub(super) fn resize_tab_panes(
         if let Some((terminal_id, rt)) =
             runtime_for_tab_pane(app, terminal_runtimes, workspace_index, tab, info.id)
         {
-            let inner_rect = terminal_inner_rect(rt, pane_inner, app.pane_scrollbars);
+            let alternate_screen = app.terminal_alternate_screen_active(Some(terminal_id), rt);
+            let inner_rect = terminal_inner_rect(alternate_screen, pane_inner, app.pane_scrollbars);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
                 rt.resize(
                     inner_rect.height,
@@ -294,8 +297,10 @@ pub(super) fn compute_pane_infos_for_tab(
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
         if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, focused_id) {
+            let alternate_screen =
+                app.terminal_alternate_screen_active(tab.terminal_id(focused_id), rt);
             (inner_rect, scrollbar_rect) =
-                stable_scrollbar_gutter(rt, pane_inner, app.pane_scrollbars);
+                stable_scrollbar_gutter(rt, alternate_screen, pane_inner, app.pane_scrollbars);
             if resize_panes
                 && tab.terminal_id(focused_id).is_some_and(|terminal_id| {
                     !app.direct_attach_resize_locks.contains(terminal_id)
@@ -332,8 +337,10 @@ pub(super) fn compute_pane_infos_for_tab(
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
         if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
+            let alternate_screen =
+                app.terminal_alternate_screen_active(tab.terminal_id(info.id), rt);
             (inner_rect, scrollbar_rect) =
-                stable_scrollbar_gutter(rt, pane_inner, app.pane_scrollbars);
+                stable_scrollbar_gutter(rt, alternate_screen, pane_inner, app.pane_scrollbars);
             if resize_panes
                 && tab.terminal_id(info.id).is_some_and(|terminal_id| {
                     !app.direct_attach_resize_locks.contains(terminal_id)
@@ -401,7 +408,26 @@ pub(super) fn render_panes(
     };
 
     for info in pane_infos {
-        if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
+        let held = ws
+            .tabs
+            .get(target.tab_index)
+            .and_then(|tab| tab.terminal_id(info.id))
+            .and_then(|terminal_id| app.held_display(terminal_id))
+            .filter(|held| {
+                held.buffer.area.width == info.inner_rect.width
+                    && held.buffer.area.height == info.inner_rect.height
+            });
+        if let Some(held) = held {
+            let buffer = frame.buffer_mut();
+            for y in 0..info.inner_rect.height {
+                for x in 0..info.inner_rect.width {
+                    buffer[(info.inner_rect.x + x, info.inner_rect.y + y)] =
+                        held.buffer[(x, y)].clone();
+                }
+            }
+        } else if let Some(rt) =
+            app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id)
+        {
             let show_cursor = info.is_focused
                 && !pane_is_scrolled_back(rt)
                 && app.pane_exposes_host_cursor(ws_idx, info.id);

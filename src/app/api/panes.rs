@@ -4,17 +4,17 @@ use crate::api::schema::{
     EventData, EventEnvelope, EventKind, PaneClearAgentAuthorityParams, PaneCopyMotion,
     PaneCopyMotionParams, PaneCopySearchDirection, PaneCopySearchParams, PaneCurrentParams,
     PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
-    PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneInputSetParams,
-    PaneLayoutPane, PaneLayoutParams, PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit,
-    PaneListParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason, PaneMoveResult,
-    PaneNeighborParams, PaneNeighborResult, PaneProcessInfo, PaneProcessInfoParams,
+    PaneFocusDirectionReason, PaneFocusDirectionResult, PaneHoldParams, PaneInfo,
+    PaneInputSetParams, PaneLayoutPane, PaneLayoutParams, PaneLayoutRect, PaneLayoutSnapshot,
+    PaneLayoutSplit, PaneListParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason,
+    PaneMoveResult, PaneNeighborParams, PaneNeighborResult, PaneProcessInfo, PaneProcessInfoParams,
     PaneProcessInfoProcess, PaneReadParams, PaneReadResult, PaneReleaseAgentParams,
     PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
-    PaneScrollParams, PaneSelectionReadParams, PaneSendInputParams, PaneSendKeysParams,
-    PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneSwapReason, PaneSwapResult,
-    PaneTarget, PaneTextPoint, PaneTextRange, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ResponseResult,
+    PaneRespawnParams, PaneScrollParams, PaneSelectionReadParams, PaneSendInputParams,
+    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneSwapReason,
+    PaneSwapResult, PaneTarget, PaneTextPoint, PaneTextRange, PaneZoomMode, PaneZoomParams,
+    PaneZoomReason, PaneZoomResult, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::App;
@@ -1500,6 +1500,83 @@ impl App {
         let pane = self.pane_info(ws_idx, pane_id).unwrap();
 
         encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    pub(super) fn handle_pane_hold(&mut self, id: String, params: PaneHoldParams) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal_id) = self.state.terminal_id_for_pane(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if params.timeout_ms == 0 {
+            self.state.held_terminals.remove(&terminal_id);
+        } else {
+            let Some(runtime) = self.terminal_runtimes.get(&terminal_id) else {
+                return pane_not_found(id, &params.pane_id);
+            };
+            let (rows, cols) = runtime.current_size();
+            let (buffer, _) = crate::server::render_stream::render_terminal_virtual(
+                runtime,
+                ratatui::layout::Rect::new(0, 0, cols, rows),
+            );
+            let alternate_screen = runtime.alternate_screen_active();
+            let timeout = std::time::Duration::from_millis(params.timeout_ms);
+            let now = std::time::Instant::now();
+            // A re-hold within a live hold keeps the frame first held, which shows
+            // the pane before the process restart that the hold covers.
+            match self.state.held_terminals.get_mut(&terminal_id) {
+                Some(held) if now < held.until => held.until = now + timeout,
+                _ => {
+                    self.state.held_terminals.insert(
+                        terminal_id,
+                        crate::app::state::HeldTerminalDisplay {
+                            buffer,
+                            alternate_screen,
+                            until: now + timeout,
+                        },
+                    );
+                }
+            }
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let render_dirty = self.render_dirty.clone();
+                let render_notify = self.render_notify.clone();
+                handle.spawn(async move {
+                    tokio::time::sleep(timeout).await;
+                    render_dirty.request_generic();
+                    render_notify.notify_one();
+                });
+            }
+        }
+        self.render_dirty.request_generic();
+        self.render_notify.notify_one();
+        encode_success(id, ResponseResult::Ok {})
+    }
+
+    pub(super) fn handle_pane_respawn(&mut self, id: String, params: PaneRespawnParams) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if self.state.terminal_id_for_pane(ws_idx, pane_id).is_none() {
+            return pane_not_found(id, &params.pane_id);
+        }
+        let env = match super::env::normalize_launch_env(params.env) {
+            Ok(env) => env,
+            Err((code, message)) => return encode_error(id, &code, message),
+        };
+        let cwd = params.cwd.map(std::path::PathBuf::from);
+        if cwd.as_ref().is_some_and(|cwd| !cwd.is_dir()) {
+            return encode_error(id, "invalid_cwd", "cwd is not a directory");
+        }
+        if params.timeout_ms == 0 {
+            self.pending_pane_respawns.remove(&pane_id);
+        } else {
+            let until =
+                std::time::Instant::now() + std::time::Duration::from_millis(params.timeout_ms);
+            self.pending_pane_respawns
+                .insert(pane_id, (until, crate::app::PaneRespawn { cwd, env }));
+        }
+        encode_success(id, ResponseResult::Ok {})
     }
 
     pub(super) fn handle_pane_read(&mut self, id: String, params: PaneReadParams) -> String {

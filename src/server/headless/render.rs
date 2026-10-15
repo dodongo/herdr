@@ -444,7 +444,13 @@ impl HeadlessServer {
                                 pane_id,
                             )
                             .is_some_and(|runtime| {
-                                runtime.alternate_screen_active() != pane.alternate_screen_active
+                                self.app.state.terminal_alternate_screen_active(
+                                    self.app
+                                        .state
+                                        .terminal_id_for_pane(workspace_index, pane_id)
+                                        .as_ref(),
+                                    runtime,
+                                ) != pane.alternate_screen_active
                             })
                     })
                 });

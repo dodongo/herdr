@@ -100,6 +100,12 @@ impl AppPolicy {
     };
 }
 
+/// How `pane.respawn` starts a pane's next process.
+pub(crate) struct PaneRespawn {
+    pub(crate) cwd: Option<std::path::PathBuf>,
+    pub(crate) env: Vec<(String, String)>,
+}
+
 pub struct App {
     pub state: AppState,
     pub(crate) pixel_mouse_available: bool,
@@ -124,6 +130,9 @@ pub struct App {
     pub(crate) pending_api_worktree_removes: HashMap<String, u64>,
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
     pub(crate) pending_worktree_remove_runtime_exits: HashMap<crate::layout::PaneId, usize>,
+    /// Launch settings `pane.respawn` registered, with when they lapse: a pane's
+    /// process exiting before then starts its next process in the same pane.
+    pub(crate) pending_pane_respawns: HashMap<crate::layout::PaneId, (Instant, PaneRespawn)>,
     pub(crate) pending_worktree_remove_runtime_restores: HashMap<crate::layout::PaneId, u64>,
     pub(crate) next_api_worktree_operation_id: u64,
     pub(crate) next_auto_update_check: Option<Instant>,
@@ -446,6 +455,7 @@ impl App {
         let mut state = AppState {
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
+            held_terminals: std::collections::HashMap::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),
             workspaces,
@@ -587,6 +597,7 @@ impl App {
             pending_api_worktree_removes: HashMap::new(),
             pending_api_worktree_remove_paths: HashMap::new(),
             pending_worktree_remove_runtime_exits: HashMap::new(),
+            pending_pane_respawns: HashMap::new(),
             pending_worktree_remove_runtime_restores: HashMap::new(),
             next_api_worktree_operation_id: 1,
             next_auto_update_check: version_check_enabled
@@ -2514,6 +2525,53 @@ mod tests {
             .unwrap()
             .manual_label
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn pane_hold_freezes_the_first_held_frame_until_released() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-hold");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        let runtime = crate::terminal::TerminalRuntime::test_with_screen_bytes(8, 2, b"old");
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+        let hold = |app: &mut App, timeout_ms| {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "req_pane_hold".into(),
+                method: crate::api::schema::Method::PaneHold(crate::api::schema::PaneHoldParams {
+                    pane_id: pane_id.clone(),
+                    timeout_ms,
+                }),
+            });
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["result"]["type"], "ok");
+        };
+        let held_text = |app: &App| {
+            let held = app.state.held_display(&terminal_id).unwrap();
+            (0..3)
+                .map(|x| held.buffer[(x, 0)].symbol().to_string())
+                .collect::<String>()
+        };
+
+        hold(&mut app, 60_000);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .unwrap()
+            .test_process_pty_bytes(b"\x1b[Hnew");
+        hold(&mut app, 60_000);
+        assert_eq!(held_text(&app), "old");
+
+        hold(&mut app, 0);
+        assert!(app.state.held_display(&terminal_id).is_none());
+        hold(&mut app, 60_000);
+        assert_eq!(held_text(&app), "new");
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use crate::api::schema::{
     Method, OutputMatch, PaneCurrentParams, PaneDirection, PaneEdgesParams,
-    PaneFocusDirectionParams, PaneInputSetParams, PaneLayoutParams, PaneListParams,
+    PaneFocusDirectionParams, PaneHoldParams, PaneInputSetParams, PaneLayoutParams, PaneListParams,
     PaneMoveDestination, PaneMoveParams, PaneNeighborParams, PaneProcessInfoParams, PaneReadParams,
     PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
-    PaneReportMetadataParams, PaneResizeParams, PaneRightClickTarget, PaneSendInputParams,
-    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget,
-    PaneWaitForOutputParams, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
-    SplitDirection,
+    PaneReportMetadataParams, PaneResizeParams, PaneRespawnParams, PaneRightClickTarget,
+    PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
+    PaneTarget, PaneWaitForOutputParams, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource,
+    Request, SplitDirection,
 };
 
 pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -28,6 +28,8 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "zoom" => pane_zoom(&args[1..]),
         "read" => pane_read(&args[1..]),
         "rename" => pane_rename(&args[1..]),
+        "hold" => pane_hold(&args[1..]),
+        "respawn" => pane_respawn(&args[1..]),
         "input" => pane_input(&args[1..]),
         "split" => pane_split(&args[1..]),
         "swap" => pane_swap(&args[1..]),
@@ -425,6 +427,79 @@ fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
     }
 
     Ok(PaneZoomParams { pane_id, mode })
+}
+
+const PANE_HOLD_USAGE: &str = "usage: herdr pane hold <pane_id> --timeout-ms N|--release";
+
+fn pane_hold(args: &[String]) -> std::io::Result<i32> {
+    let timeout_ms = match args.get(1..).unwrap_or_default() {
+        [flag] if flag == "--release" => Some(0),
+        [flag, value] if flag == "--timeout-ms" => value.parse::<u64>().ok().filter(|ms| *ms > 0),
+        _ => None,
+    };
+    let (Some(raw_pane_id), Some(timeout_ms)) = (args.first(), timeout_ms) else {
+        eprintln!("{PANE_HOLD_USAGE}");
+        return Ok(2);
+    };
+    super::send_ok_request(Method::PaneHold(PaneHoldParams {
+        pane_id: super::normalize_pane_id(raw_pane_id),
+        timeout_ms,
+    }))
+}
+
+const PANE_RESPAWN_USAGE: &str =
+    "usage: herdr pane respawn <pane_id> --timeout-ms N [--cwd PATH] [--env KEY=VALUE]...|--cancel";
+
+fn pane_respawn(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_pane_id) = args.first().filter(|arg| !arg.starts_with("--")) else {
+        eprintln!("{PANE_RESPAWN_USAGE}");
+        return Ok(2);
+    };
+    if args.len() == 2 && args[1] == "--cancel" {
+        return super::send_ok_request(Method::PaneRespawn(PaneRespawnParams {
+            pane_id: super::normalize_pane_id(raw_pane_id),
+            timeout_ms: 0,
+            cwd: None,
+            env: std::collections::HashMap::new(),
+        }));
+    }
+    let mut timeout_ms = None;
+    let mut cwd = None;
+    let mut env = std::collections::HashMap::new();
+    let mut rest = args[1..].iter();
+    while let Some(flag) = rest.next() {
+        let Some(value) = rest.next() else {
+            eprintln!("{PANE_RESPAWN_USAGE}");
+            return Ok(2);
+        };
+        match flag.as_str() {
+            "--timeout-ms" => timeout_ms = value.parse::<u64>().ok().filter(|ms| *ms > 0),
+            "--cwd" => cwd = Some(value.clone()),
+            "--env" => match super::parse_env_assignment(value) {
+                Ok((key, value)) => {
+                    env.insert(key, value);
+                }
+                Err(message) => {
+                    eprintln!("{message}");
+                    return Ok(2);
+                }
+            },
+            _ => {
+                eprintln!("{PANE_RESPAWN_USAGE}");
+                return Ok(2);
+            }
+        }
+    }
+    let Some(timeout_ms) = timeout_ms else {
+        eprintln!("{PANE_RESPAWN_USAGE}");
+        return Ok(2);
+    };
+    super::send_ok_request(Method::PaneRespawn(PaneRespawnParams {
+        pane_id: super::normalize_pane_id(raw_pane_id),
+        timeout_ms,
+        cwd,
+        env,
+    }))
 }
 
 fn pane_rename(args: &[String]) -> std::io::Result<i32> {
@@ -1684,6 +1759,10 @@ fn print_pane_help() {
     );
     eprintln!("  herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
+    eprintln!("  herdr pane hold <pane_id> --timeout-ms N|--release");
+    eprintln!(
+        "  herdr pane respawn <pane_id> --timeout-ms N [--cwd PATH] [--env KEY=VALUE]...|--cancel"
+    );
     eprintln!("  herdr pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
     eprintln!("  herdr pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
     eprintln!(

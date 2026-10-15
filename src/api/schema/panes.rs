@@ -322,6 +322,25 @@ pub struct PaneRenameParams {
     pub label: Option<String>,
 }
 
+/// Freeze what clients see of a pane for `timeout_ms`; 0 releases the hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneHoldParams {
+    pub pane_id: String,
+    pub timeout_ms: u64,
+}
+
+/// Start the default shell in the same pane when the pane's process exits
+/// within `timeout_ms`, instead of closing the pane; 0 cancels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneRespawnParams {
+    pub pane_id: String,
+    pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendTextParams {
     pub pane_id: String,

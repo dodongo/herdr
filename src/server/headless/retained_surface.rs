@@ -338,6 +338,14 @@ impl HeadlessServer {
             ) else {
                 fallback!("runtime_missing");
             };
+            if self
+                .app
+                .state
+                .terminal_id_for_pane(workspace_index, pane_id)
+                .is_some_and(|terminal_id| self.app.state.held_display(&terminal_id).is_some())
+            {
+                fallback!("held_terminal");
+            }
             let Some(snapshot) = runtime.collect_dirty_patch_snapshot(width, height) else {
                 fallback!("terminal_snapshot");
             };

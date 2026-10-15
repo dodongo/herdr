@@ -193,6 +193,10 @@ pub enum Method {
     PaneLinkResolve(PaneLinkActivateParams),
     #[serde(rename = "pane.rename")]
     PaneRename(PaneRenameParams),
+    #[serde(rename = "pane.hold")]
+    PaneHold(PaneHoldParams),
+    #[serde(rename = "pane.respawn")]
+    PaneRespawn(PaneRespawnParams),
     #[serde(rename = "pane.send_text")]
     PaneSendText(PaneSendTextParams),
     #[serde(rename = "pane.send_keys")]

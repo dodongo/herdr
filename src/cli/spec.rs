@@ -531,6 +531,22 @@ fn pane_command() -> Command {
                 .arg(flag("clear")),
         )
         .subcommand(
+            Command::new("hold")
+                .about("Freeze what clients see of a pane")
+                .arg(required("pane_id", "PANE_ID"))
+                .arg(option("timeout-ms", "N"))
+                .arg(flag("release")),
+        )
+        .subcommand(
+            Command::new("respawn")
+                .about("Restart a pane's next exiting process in place")
+                .arg(required("pane_id", "PANE_ID"))
+                .arg(option("timeout-ms", "N"))
+                .arg(flag("cancel"))
+                .arg(path_option("cwd", "PATH"))
+                .arg(env_option()),
+        )
+        .subcommand(
             Command::new("input")
                 .about("Set pane input routing")
                 .arg(Arg::new("pane_id").value_name("PANE_ID"))

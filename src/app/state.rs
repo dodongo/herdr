@@ -786,11 +786,22 @@ pub enum TabBarStatusSegment {
     Text(Option<String>),
 }
 
+/// A terminal's frame frozen by `pane.hold`: panes show it instead of the live
+/// screen until the hold is released or expires, so a process restarting in the
+/// pane is not seen until its replacement has drawn.
+pub(crate) struct HeldTerminalDisplay {
+    pub(crate) buffer: ratatui::buffer::Buffer,
+    pub(crate) alternate_screen: bool,
+    pub(crate) until: std::time::Instant,
+}
+
 pub struct AppState {
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
     /// Terminal ids whose size is currently owned by a direct attach client.
     pub direct_attach_resize_locks: std::collections::HashSet<crate::terminal::TerminalId>,
+    pub(crate) held_terminals:
+        std::collections::HashMap<crate::terminal::TerminalId, HeldTerminalDisplay>,
     pub(crate) pane_id_aliases: std::collections::HashMap<u32, PaneId>,
     pub(crate) public_pane_id_aliases: std::collections::HashMap<String, PaneId>,
     pub workspaces: Vec<Workspace>,
@@ -932,6 +943,30 @@ impl AppState {
         }
     }
 
+    /// The held frame for a terminal, while its hold lasts.
+    pub(crate) fn held_display(
+        &self,
+        terminal_id: &crate::terminal::TerminalId,
+    ) -> Option<&HeldTerminalDisplay> {
+        self.held_terminals
+            .get(terminal_id)
+            .filter(|held| std::time::Instant::now() < held.until)
+    }
+
+    /// Whether a terminal shows the alternate screen, as frozen by its hold.
+    pub(crate) fn terminal_alternate_screen_active(
+        &self,
+        terminal_id: Option<&crate::terminal::TerminalId>,
+        runtime: &crate::terminal::TerminalRuntime,
+    ) -> bool {
+        terminal_id
+            .and_then(|terminal_id| self.held_display(terminal_id))
+            .map_or_else(
+                || runtime.alternate_screen_active(),
+                |held| held.alternate_screen,
+            )
+    }
+
     /// Returns true when the given (workspace, tab, pane) refers to the
     /// currently focused pane in the active workspace's active tab.
     pub(crate) fn runtime_for_pane_in_workspace<'a>(
@@ -1025,6 +1060,7 @@ impl AppState {
         Self {
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
+            held_terminals: std::collections::HashMap::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),
             workspaces: Vec::new(),
