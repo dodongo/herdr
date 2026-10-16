@@ -91,21 +91,42 @@ fn plain_pane_label_uses_name_then_title_and_never_renders_agent_state() {
         let rows = agent_rows(&projected, &config, None);
         let row = &rows[1];
         assert_eq!(row.status, None);
-        assert_eq!(row.rows.len(), 1);
+        assert_eq!(row.rows.len(), 2);
         assert!(matches!(
             row.rows[0].as_slice(),
             [crate::ui::ResolvedToken { kind: crate::ui::ResolvedTokenKind::Pane(label), .. }]
                 if label == expected
         ));
-        let area = Rect::new(0, 0, 40, 1);
+        let area = Rect::new(0, 0, 40, 2);
         let mut buffer = Buffer::empty(area);
         render_agent_row(&mut buffer, area, row, &config);
-        let line = (0..area.width)
-            .map(|x| buffer[(x, 0)].symbol())
-            .collect::<String>();
-        assert_eq!(line.trim_end(), format!(" └{expected}"));
+        let line = |y| {
+            (0..area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        assert_eq!(line(0).trim_end(), format!(" └{expected}"));
+        assert_eq!(line(1).trim_end(), "    repo");
         projected.panes[0].tokens.retain(|(key, _)| key != "p_name");
     }
+}
+
+#[test]
+fn plain_pane_folder_row_prefers_the_foreground_folder_and_needs_a_folder() {
+    let mut projected = snapshot();
+    projected.agents = vec![agent("parent", None)];
+    let mut pane = plain_pane("shell", "parent");
+    pane.foreground_cwd = Some("/repo/server".into());
+    projected.panes = vec![pane];
+    let config = ClientShellConfig::from_config(&Config::default());
+    assert!(matches!(
+        agent_rows(&projected, &config, None)[1].rows[1].as_slice(),
+        [crate::ui::ResolvedToken { kind: crate::ui::ResolvedTokenKind::Custom(folder), .. }]
+            if folder == "server"
+    ));
+    projected.panes[0].foreground_cwd = None;
+    projected.panes[0].cwd = None;
+    assert_eq!(agent_rows(&projected, &config, None)[1].rows.len(), 1);
 }
 
 #[test]

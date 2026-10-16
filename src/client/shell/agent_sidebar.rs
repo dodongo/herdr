@@ -383,15 +383,28 @@ pub(super) fn agent_row(
     let agent = match entry {
         AgentListEntry::Agent(agent) => agent,
         AgentListEntry::Pane(pane) => {
+            let mut rows = vec![vec![crate::ui::ResolvedToken {
+                kind: crate::ui::ResolvedTokenKind::Pane(pane_label(pane).to_owned()),
+                style: Default::default(),
+            }]];
+            // A second row gives the pane a taller click target and names its folder.
+            if let Some(folder) = pane
+                .foreground_cwd
+                .as_deref()
+                .or(pane.cwd.as_deref())
+                .and_then(|cwd| std::path::Path::new(cwd).file_name())
+            {
+                rows.push(vec![crate::ui::ResolvedToken {
+                    kind: crate::ui::ResolvedTokenKind::Custom(folder.to_string_lossy().into()),
+                    style: Default::default(),
+                }]);
+            }
             return Some(AgentRow {
                 pane_id: pane.pane_id.clone(),
                 status: None,
                 focused: pane.focused,
                 depth,
-                rows: vec![vec![crate::ui::ResolvedToken {
-                    kind: crate::ui::ResolvedTokenKind::Pane(pane_label(pane).to_owned()),
-                    style: Default::default(),
-                }]],
+                rows,
             });
         }
     };
