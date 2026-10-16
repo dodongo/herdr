@@ -444,30 +444,31 @@ fn render_agents_only_sidebar(
     let palette = &config.palette;
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     let footer_y = content.bottom().saturating_sub(1);
-    super::render_agent_panel(
-        buffer,
-        Rect::new(
-            content.x,
-            content.y,
-            content.width,
-            content.height.saturating_sub(1),
-        ),
-        snapshot,
-        config,
-        state.agent_scroll,
-        hits,
+    let mut body = Rect::new(
+        content.x,
+        content.y,
+        content.width,
+        content.height.saturating_sub(1),
     );
-    // The panel's top rule separates it from Spaces, which this layout omits.
-    if content.height > 0 {
+    // Without Spaces the list needs no title; only an active agent view gets a row.
+    if let Some(label) = snapshot
+        .agent_view_label
+        .as_deref()
+        .filter(|_| body.height > 0)
+    {
         put_text(
             buffer,
-            content.x,
-            content.y,
-            content.width,
-            &" ".repeat(content.width as usize),
-            Style::default(),
+            body.x,
+            body.y,
+            body.width,
+            &format!(" {label}"),
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
         );
+        body = Rect::new(body.x, body.y + 1, body.width, body.height - 1);
     }
+    super::render_agent_panel_list(buffer, body, snapshot, config, state.agent_scroll, hits);
     if config.mouse_capture && content.height > 1 {
         render_global_launcher(
             buffer,

@@ -181,10 +181,38 @@ pub(super) fn render_agent_panel(
         return;
     }
 
+    render_agent_panel_list(
+        buffer,
+        agent_list_body(area),
+        snapshot,
+        config,
+        agent_scroll,
+        hits,
+    );
+}
+
+/// The panel's list area, below its rule, title, and spacer rows.
+pub(super) fn agent_list_body(area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y.saturating_add(3),
+        area.width,
+        area.height.saturating_sub(3),
+    )
+}
+
+pub(super) fn render_agent_panel_list(
+    buffer: &mut Buffer,
+    body: Rect,
+    snapshot: &ClientShellSnapshot,
+    config: &ClientShellConfig,
+    agent_scroll: &mut usize,
+    hits: &mut ShellHitMap,
+) {
     let rows = agent_rows(snapshot, config, None);
     render_agent_list(
         buffer,
-        area,
+        body,
         &rows,
         snapshot
             .agent_view_label
@@ -249,7 +277,7 @@ pub(super) fn render_agent_panel_header(
 
 pub(super) fn render_agent_list<T>(
     buffer: &mut Buffer,
-    area: Rect,
+    body: Rect,
     rows: &[T],
     empty_message: Option<&str>,
     config: &ClientShellConfig,
@@ -258,12 +286,6 @@ pub(super) fn render_agent_list<T>(
     row_lines: impl Fn(&T) -> usize,
     mut render_row: impl FnMut(&mut Buffer, Rect, &T, &mut ShellHitMap),
 ) {
-    let body = Rect::new(
-        area.x,
-        area.y.saturating_add(3),
-        area.width,
-        area.height.saturating_sub(3),
-    );
     hits.agent_body = body;
     if body.is_empty() || rows.is_empty() {
         *agent_scroll = 0;

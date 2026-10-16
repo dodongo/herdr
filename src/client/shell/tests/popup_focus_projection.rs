@@ -167,15 +167,27 @@ fn hidden_spaces_give_the_sidebar_to_agents_and_keep_the_menu() {
         .collect::<Vec<_>>();
     let sidebar = |row: &str| row.chars().take(25).collect::<String>();
     assert!(!rows.iter().any(|row| sidebar(row).contains("spaces")));
-    assert!(
-        sidebar(&rows[1]).starts_with(" agents"),
-        "agents start at the top"
-    );
+    assert_eq!(state.hits.agent_body.y, 0, "agents start at the top");
     assert!(!sidebar(&rows[0]).contains('─'), "no rule above the agents");
+    assert!(!rows.iter().any(|row| sidebar(row).starts_with(" agents")));
     assert!(sidebar(&rows[19]).contains("menu"));
     assert_eq!(state.hits.global_launcher.y, 19);
     assert_eq!(state.hits.sidebar_section_divider, Rect::default());
     assert!(state.hits.workspaces.is_empty());
+
+    let mut filtered = snapshot();
+    filtered.agent_view_label = Some("review".into());
+    state.set_snapshot(Box::new(filtered));
+    let frame = state.compose(106, 20).expect("composed frame");
+    let first: String = frame.cells[..25]
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect();
+    assert!(
+        first.starts_with(" review"),
+        "an agent view names itself on the top row"
+    );
+    assert_eq!(state.hits.agent_body.y, 1);
 }
 
 #[test]

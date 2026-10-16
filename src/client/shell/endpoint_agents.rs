@@ -62,7 +62,7 @@ pub(super) fn render_expanded(
     let rows = agent_rows(endpoints, active_endpoint_id, config);
     super::agent_sidebar::render_agent_list(
         buffer,
-        area,
+        super::agent_sidebar::agent_list_body(area),
         &rows,
         agent_view_label.map(|_| " no matching agents"),
         config,
