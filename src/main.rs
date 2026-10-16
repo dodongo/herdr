@@ -332,10 +332,6 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set to "" to leave the outer terminal title alone.
 # window_title = "{hostname}: {workspace}"
 
-# Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
-# "workspaces" is accepted as an alias for "spaces".
-# agent_panel_sort = "spaces"
-
 # Agent status indicators: "dots" preserves the compact color marks; "symbols" uses
 # distinct static glyphs for blocked, working, done, idle, and unknown states.
 # status_indicators = "dots"

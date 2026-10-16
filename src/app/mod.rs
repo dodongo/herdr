@@ -216,15 +216,6 @@ fn load_plugin_registry(
         .collect()
 }
 
-fn agent_panel_sort_from_config(
-    sort: crate::config::AgentPanelSortConfig,
-) -> state::AgentPanelSort {
-    match sort {
-        crate::config::AgentPanelSortConfig::Spaces => state::AgentPanelSort::Spaces,
-        crate::config::AgentPanelSortConfig::Priority => state::AgentPanelSort::Priority,
-    }
-}
-
 /// Parse the configured agent name list into a deduplicated set of `Agent`
 /// values. Unknown agent names are silently dropped so a typo cannot disable
 /// other valid entries.
@@ -466,8 +457,6 @@ impl App {
             (Vec::new(), None, 0)
         };
 
-        let agent_panel_sort = agent_panel_sort_from_config(config.ui.agent_panel_sort);
-
         let worktree_directory =
             crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
 
@@ -541,7 +530,6 @@ impl App {
             auto_create_default_workspace: config.session.auto_create_default_workspace,
             prefix_keys,
             headless_size: config.headless_size(),
-            agent_panel_sort,
             agent_view_override: None,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
@@ -929,8 +917,6 @@ impl App {
                     &config.ui.tab_bar_right_separator,
                 );
                 self.configure_window_title(&config.ui.window_title);
-                self.state.agent_panel_sort =
-                    agent_panel_sort_from_config(config.ui.agent_panel_sort);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.sound = config.ui.sound.clone();
@@ -1430,23 +1416,6 @@ mod tests {
     }
 
     #[test]
-    fn startup_uses_configured_agent_panel_sort() {
-        let mut config = Config::default();
-        config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
-        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let app = App::new(
-            &config,
-            crate::app::AppPolicy::TEST,
-            None,
-            api_rx,
-            crate::api::EventHub::default(),
-        );
-
-        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
-    }
-
-    #[test]
     fn theme_auto_switch_is_opt_in_and_preserves_manual_default() {
         let mut config = Config::default();
         config.theme.name = Some("tokyo-night".to_string());
@@ -1783,7 +1752,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[server]\nheadless_cols = 160\nheadless_rows = 50\n[ui]\nagent_panel_sort = \"priority\"\n[ui.toast]\ndelivery = \"herdr\"\n",
+            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[server]\nheadless_cols = 160\nheadless_rows = 50\n[ui.toast]\ndelivery = \"herdr\"\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1808,7 +1777,6 @@ mod tests {
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Herdr
         );
-        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
         let report = app.reload_config();
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
         assert!(app.state.request_client_config_reload);

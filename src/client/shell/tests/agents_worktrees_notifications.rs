@@ -650,7 +650,7 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
 }
 
 #[test]
-fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
+fn agent_sidebar_honors_symbols_tokens_and_stable_hits() {
     let mut projected = snapshot();
     let mut second_pane = projected.panes[0].clone();
     second_pane.pane_id = "pane_2".into();
@@ -691,7 +691,6 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
         },
     ];
     let mut config = Config::default();
-    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
     config.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
     config.ui.sidebar.agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
     config.ui.sidebar.agents.rows_by_agent.insert(
@@ -731,7 +730,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             .agents
             .first()
             .map(|(_, pane_id)| pane_id.as_str()),
-        Some("pane_2")
+        Some("pane_1")
     );
 
     let first = state.hits.agents[0].0;
@@ -746,7 +745,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
     };
     assert!(matches!(
         &request.method,
-        crate::api::schema::Method::PaneFocus(target) if target.pane_id == "pane_2"
+        crate::api::schema::Method::PaneFocus(target) if target.pane_id == "pane_1"
     ));
 
     state.compose(106, 10).expect("short agent sidebar frame");
@@ -756,7 +755,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             .agents
             .first()
             .map(|(_, pane_id)| pane_id.as_str()),
-        Some("pane_2")
+        Some("pane_1")
     );
     let body = state.hits.agent_body;
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
@@ -774,7 +773,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             .agents
             .first()
             .map(|(_, pane_id)| pane_id.as_str()),
-        Some("pane_1")
+        Some("pane_2")
     );
 
     state.sidebar_collapsed = true;
@@ -927,7 +926,6 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             .collect::<Vec<_>>(),
         vec!["pane_2", "pane_3"]
     );
-    assert_eq!(state.hits.agent_sort_toggle, Rect::default());
 
     let mut focus = ClientShellInput::default();
     state.record_binding(
@@ -956,64 +954,6 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
                 crate::api::schema::Method::PaneFocus(target) if target.pane_id == "pane_2"
             )
     ));
-}
-
-#[test]
-fn agent_sort_toggle_is_client_local_and_persists_per_endpoint() {
-    let path = std::env::temp_dir().join(format!(
-        "herdr-shell-agent-sort-{}-{}.json",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos()
-    ));
-    let mut projected = snapshot();
-    projected.agents.push(ClientShellAgent {
-        pane_id: "pane_1".into(),
-        workspace_id: "ws_1".into(),
-        tab_id: "tab_1".into(),
-        name: Some("pi".into()),
-        display_agent: None,
-        agent: Some("pi".into()),
-        title: None,
-        terminal_title: None,
-        terminal_title_stripped: None,
-        agent_status: AgentStatus::Working,
-        state_change_seq: 1,
-        state_labels: Vec::new(),
-        tokens: Vec::new(),
-        focused: true,
-    });
-    let config =
-        ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
-    let mut state = ClientShellState::new(config);
-    state.set_snapshot(Box::new(projected));
-    state.set_pane_surface(surface());
-    state.compose(106, 30).expect("agent sidebar frame");
-    let toggle = state.hits.agent_sort_toggle;
-
-    let click = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: toggle.x,
-        row: toggle.y,
-        modifiers: KeyModifiers::empty(),
-    })]);
-
-    assert_eq!(
-        state.config.agent_panel_sort,
-        crate::config::AgentPanelSortConfig::Priority
-    );
-    assert!(click.actions.is_empty());
-    let reloaded_config =
-        ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
-    let reloaded = ClientShellState::new(reloaded_config);
-    assert_eq!(
-        reloaded.config.agent_panel_sort,
-        crate::config::AgentPanelSortConfig::Priority
-    );
-    assert!(reloaded.agent_panel_sort_manual);
-    std::fs::remove_file(path).expect("remove agent sort preferences");
 }
 
 #[test]

@@ -582,7 +582,7 @@ This is a hotfix release for v0.9.2. See the v0.9.2 notes for the full feature r
 - Added `ui.pane_borders` and `ui.pane_gaps` to make split pane dividers and spacing configurable. (#271)
 
 ### Changed
-- Removed the Agents panel workspace/all filter. The panel now always shows all agents, defaults to grouped-by-space ordering, and can switch to priority ordering with `ui.agent_panel_sort = "priority"`. (#318)
+- Removed the Agents panel workspace/all filter. The panel now always shows all agents and defaults to grouped-by-space ordering. (#318)
 - User keybindings now displace conflicting built-in defaults during config load, so overriding a default binding no longer leaves both actions attached to the same key. (#747)
 - Worktree creation now checks out an existing local branch when the requested branch already exists instead of failing by trying to create it again. (#729)
 - Worktree operations started through the socket API and plugin/UI flows now defer long-running Git work until the app runtime can drive it, keeping clients responsive and preserving plugin lifecycle events for worktree-created panes. (#657, #662, #686)

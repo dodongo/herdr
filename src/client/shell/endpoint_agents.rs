@@ -52,13 +52,7 @@ pub(super) fn render_expanded(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
 ) {
-    if !super::agent_sidebar::render_agent_panel_header(
-        buffer,
-        area,
-        agent_view_label,
-        config,
-        hits,
-    ) {
+    if !super::agent_sidebar::render_agent_panel_header(buffer, area, agent_view_label, config) {
         return;
     }
     let rows = agent_rows(endpoints, active_endpoint_id, config);
@@ -134,44 +128,23 @@ fn agent_rows(
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,
 ) -> Vec<EndpointAgentRow> {
-    let mut rendered_rows = endpoints
-        .iter()
-        .filter_map(|endpoint| {
-            endpoint.snapshot.as_deref().map(|snapshot| {
-                snapshot
-                    .agents
-                    .iter()
-                    .filter_map(|agent| {
-                        super::agent_sidebar::agent_row(
-                            snapshot,
-                            &agent.pane_id,
-                            config,
-                            Some(&endpoint.label),
-                        )
-                    })
-                    .map(|agent| ((endpoint.endpoint_id.clone(), agent.pane_id.clone()), agent))
-                    .collect::<Vec<_>>()
+    super::aggregate_navigation::aggregate_agent_rows(endpoints, active_endpoint_id)
+        .into_iter()
+        .filter_map(|row| {
+            let mut agent = super::agent_sidebar::agent_row(
+                row.endpoint.snapshot,
+                row.agent,
+                row.depth,
+                config,
+                Some(row.endpoint.label),
+            )?;
+            agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
+            Some(EndpointAgentRow {
+                endpoint_id: row.endpoint.endpoint_id.clone(),
+                machine_label: row.endpoint.label.to_owned(),
+                stale: row.endpoint.stale(),
+                agent,
             })
         })
-        .flatten()
-        .collect::<HashMap<_, _>>();
-
-    super::aggregate_navigation::aggregate_agent_rows(
-        endpoints,
-        active_endpoint_id,
-        config.agent_panel_sort,
-    )
-    .into_iter()
-    .filter_map(|row| {
-        let key = (row.endpoint.endpoint_id.clone(), row.agent.pane_id.clone());
-        let mut agent = rendered_rows.remove(&key)?;
-        agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
-        Some(EndpointAgentRow {
-            endpoint_id: row.endpoint.endpoint_id.clone(),
-            machine_label: row.endpoint.label.to_owned(),
-            stale: row.endpoint.stale(),
-            agent,
-        })
-    })
-    .collect()
+        .collect()
 }

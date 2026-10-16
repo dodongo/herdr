@@ -1010,17 +1010,31 @@ claude = [["terminal_title"]]
             r#"
 [ui]
 agent_panel_scope = "current"
-agent_panel_sort = "priority"
 "#,
         )
         .unwrap();
 
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_ignores_retired_agent_panel_sort() {
+        let loaded = load_live_config_from_str(
+            r#"
+[ui]
+agent_panel_sort = "priority"
+mouse_capture = false
+"#,
+        )
+        .unwrap();
+
         assert_eq!(
-            loaded.config.ui.agent_panel_sort,
-            super::super::AgentPanelSortConfig::Priority
+            loaded.diagnostics,
+            vec!["unknown config key ui.agent_panel_sort; ignoring key"]
         );
+        assert!(loaded.invalid_sections.is_empty());
+        assert!(!loaded.config.ui.mouse_capture);
     }
 
     #[test]

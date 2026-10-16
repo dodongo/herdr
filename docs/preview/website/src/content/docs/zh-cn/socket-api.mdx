@@ -341,8 +341,7 @@ UI 上下文变化时,该投影会重新求值。它控制展开和折叠的侧�
 排序字段包括 `workspace_order`、`tab_order`、`pane_order`、`attention`、
 `status`、`agent`、`seen`、`state_change_seq` 或 `{"token":"name"}`。排序是
 稳定的,按声明顺序求值,并接受 `asc` 或 `desc`。缺失值排在存在值之后。省略
-`sort` 时,现有 `ui.agent_panel_sort` 策略继续生效。自定义排序会临时替换该
-策略,但不会重写配置。
+`sort` 时,子智能体会分组显示在父窗格下方。自定义排序会临时替换该顺序。
 
 `source` 标识所有者。插件使用 `plugin:<HERDR_PLUGIN_ID>`;当所属插件不存在
 或被禁用时,Herdr 会拒绝设置。其他调用方可以使用自己的非 `plugin:` source。

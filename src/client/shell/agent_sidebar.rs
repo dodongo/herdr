@@ -9,44 +9,102 @@ use ratatui::{
 };
 
 use super::*;
+use crate::protocol::ClientShellAgent;
 
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
+    pub(super) depth: usize,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
 
-pub(super) fn ordered_agent_pane_ids(
-    snapshot: &ClientShellSnapshot,
-    sort: crate::config::AgentPanelSortConfig,
-) -> Vec<String> {
+pub(super) fn ordered_agent_pane_ids(snapshot: &ClientShellSnapshot) -> Vec<String> {
+    ordered_agents(snapshot)
+        .into_iter()
+        .map(|(agent, _)| agent.pane_id.clone())
+        .collect()
+}
+
+pub(super) fn ordered_agents(snapshot: &ClientShellSnapshot) -> Vec<(&ClientShellAgent, usize)> {
     if snapshot.agent_view_label.is_some() {
         return snapshot
             .agent_order
             .iter()
-            .filter(|pane_id| {
+            .filter_map(|pane_id| {
                 snapshot
                     .agents
                     .iter()
-                    .any(|agent| agent.pane_id == pane_id.as_str())
+                    .find(|agent| agent.pane_id == *pane_id)
+                    .map(|agent| (agent, 0))
             })
-            .cloned()
             .collect();
     }
-    let mut agents = snapshot.agents.iter().collect::<Vec<_>>();
-    if sort == crate::config::AgentPanelSortConfig::Priority {
-        agents.sort_by_key(|agent| {
-            (
-                std::cmp::Reverse(status_priority(agent.agent_status)),
-                std::cmp::Reverse(agent.state_change_seq),
-            )
-        });
+    tree_ordered_agents(snapshot.agents.iter())
+}
+
+pub(super) fn tree_ordered_agents<'a>(
+    agents: impl IntoIterator<Item = &'a ClientShellAgent>,
+) -> Vec<(&'a ClientShellAgent, usize)> {
+    let agents = agents.into_iter().collect::<Vec<_>>();
+    let indices = agents
+        .iter()
+        .enumerate()
+        .map(|(index, agent)| (agent.pane_id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut parents = agents
+        .iter()
+        .map(|agent| {
+            agent
+                .tokens
+                .iter()
+                .find(|(key, _)| key == "p_parent_pane")
+                .and_then(|(_, parent)| indices.get(parent.as_str()).copied())
+        })
+        .collect::<Vec<_>>();
+    let mut visited = vec![false; agents.len()];
+    for start in 0..agents.len() {
+        let mut path = Vec::new();
+        let mut current = Some(start);
+        while let Some(index) = current {
+            if visited[index] {
+                if let Some(cycle_start) = path.iter().position(|ancestor| *ancestor == index) {
+                    for ancestor in &path[cycle_start..] {
+                        parents[*ancestor] = None;
+                    }
+                }
+                break;
+            }
+            visited[index] = true;
+            path.push(index);
+            current = parents[index];
+        }
     }
-    agents
+    let mut children = vec![Vec::new(); agents.len()];
+    let mut roots = Vec::new();
+    for (index, parent) in parents.into_iter().enumerate() {
+        if let Some(parent) = parent {
+            children[parent].push(index);
+        } else {
+            roots.push(index);
+        }
+    }
+    let mut pending = roots
         .into_iter()
-        .map(|agent| agent.pane_id.clone())
-        .collect()
+        .rev()
+        .map(|index| (index, 0))
+        .collect::<Vec<_>>();
+    let mut ordered = Vec::with_capacity(agents.len());
+    while let Some((index, depth)) = pending.pop() {
+        ordered.push((agents[index], depth));
+        pending.extend(
+            children[index]
+                .iter()
+                .rev()
+                .map(|child| (*child, depth + 1)),
+        );
+    }
+    ordered
 }
 
 pub(super) fn render_agent_panel(
@@ -57,13 +115,7 @@ pub(super) fn render_agent_panel(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
 ) {
-    if !render_agent_panel_header(
-        buffer,
-        area,
-        snapshot.agent_view_label.as_deref(),
-        config,
-        hits,
-    ) {
+    if !render_agent_panel_header(buffer, area, snapshot.agent_view_label.as_deref(), config) {
         return;
     }
 
@@ -92,7 +144,6 @@ pub(super) fn render_agent_panel_header(
     area: Rect,
     agent_view_label: Option<&str>,
     config: &ClientShellConfig,
-    hits: &mut ShellHitMap,
 ) -> bool {
     if area.height == 0 {
         return false;
@@ -118,36 +169,19 @@ pub(super) fn render_agent_panel_header(
             .fg(config.palette.overlay0)
             .add_modifier(Modifier::BOLD),
     );
-    let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
-        crate::config::AgentPanelSortConfig::Spaces => "grouped",
-        crate::config::AgentPanelSortConfig::Priority => "priority",
-    });
-    let sort_width = display_width(sort_label).min(area.width as usize) as u16;
-    let sort_rect = Rect::new(
-        area.right().saturating_sub(sort_width),
-        area.y + 1,
-        sort_width,
-        1,
-    );
-    hits.agent_sort_toggle = if config.mouse_capture && agent_view_label.is_none() {
-        sort_rect
-    } else {
-        Rect::default()
-    };
-    put_text(
-        buffer,
-        sort_rect.x,
-        sort_rect.y,
-        sort_rect.width,
-        sort_label,
-        Style::default()
-            .fg(if agent_view_label.is_some() {
-                config.palette.accent
-            } else {
-                config.palette.overlay0
-            })
-            .add_modifier(Modifier::BOLD),
-    );
+    if let Some(label) = agent_view_label {
+        let width = display_width(label).min(area.width as usize) as u16;
+        put_text(
+            buffer,
+            area.right().saturating_sub(width),
+            area.y + 1,
+            width,
+            label,
+            Style::default()
+                .fg(config.palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
     true
 }
 
@@ -239,22 +273,19 @@ pub(super) fn agent_rows(
     config: &ClientShellConfig,
     machine: Option<&str>,
 ) -> Vec<AgentRow> {
-    ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
+    ordered_agents(snapshot)
         .into_iter()
-        .filter_map(|pane_id| agent_row(snapshot, &pane_id, config, machine))
+        .filter_map(|(agent, depth)| agent_row(snapshot, agent, depth, config, machine))
         .collect()
 }
 
 pub(super) fn agent_row(
     snapshot: &ClientShellSnapshot,
-    pane_id: &str,
+    agent: &ClientShellAgent,
+    depth: usize,
     config: &ClientShellConfig,
     machine: Option<&str>,
 ) -> Option<AgentRow> {
-    let agent = snapshot
-        .agents
-        .iter()
-        .find(|agent| agent.pane_id == pane_id)?;
     let workspace = snapshot
         .workspaces
         .iter()
@@ -314,6 +345,7 @@ pub(super) fn agent_row(
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
         focused: agent.focused,
+        depth,
         rows,
     })
 }
@@ -354,8 +386,19 @@ pub(super) fn render_agent_row(
         row.rows.clone()
     };
     for (index, tokens) in rows.iter().take(rect.height as usize).enumerate() {
-        let indent = if index == 0 { 1 } else { 3 };
-        let mut spans = vec![ratatui::text::Span::raw(" ".repeat(indent))];
+        let indent = if index == 0 {
+            1 + row.depth
+        } else {
+            3 + row.depth
+        };
+        let mut spans = if index == 0 && row.depth > 0 {
+            vec![
+                ratatui::text::Span::raw(" ".repeat(row.depth)),
+                ratatui::text::Span::styled("└", secondary),
+            ]
+        } else {
+            vec![ratatui::text::Span::raw(" ".repeat(indent))]
+        };
         spans.extend(crate::ui::resolved_token_spans(
             tokens,
             icon,
@@ -364,7 +407,7 @@ pub(super) fn render_agent_row(
             secondary,
             secondary,
             palette,
-            rect.width.saturating_sub(indent as u16) as usize,
+            (rect.width as usize).saturating_sub(indent),
         ));
         Paragraph::new(Line::from(spans)).style(row_style).render(
             Rect::new(rect.x, rect.y + index as u16, rect.width, 1),

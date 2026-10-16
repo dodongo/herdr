@@ -56,9 +56,6 @@ impl ClientShellState {
             sidebar_collapsed: self
                 .sidebar_collapsed_manual
                 .then_some(self.sidebar_collapsed),
-            agent_panel_sort: self
-                .agent_panel_sort_manual
-                .then_some(self.config.agent_panel_sort),
             collapsed_groups,
             remote_collapsed_groups,
         };
@@ -71,7 +68,6 @@ impl ClientShellState {
     pub(crate) fn reload_client_config(&mut self) {
         match crate::config::load_live_config() {
             Ok(loaded) => {
-                let agent_panel_sort = self.config.agent_panel_sort;
                 let diagnostics = self.config.apply_live_config(
                     &loaded.config,
                     &loaded.diagnostics,
@@ -85,9 +81,6 @@ impl ClientShellState {
                 }
                 if !self.sidebar_width_manual {
                     self.sidebar_width = self.config.sidebar_width;
-                }
-                if self.agent_panel_sort_manual {
-                    self.config.agent_panel_sort = agent_panel_sort;
                 }
                 self.set_local_config_diagnostic(self.config.local_config_diagnostic(&diagnostics));
                 if let Some(snapshot) = self.snapshot.as_deref() {
@@ -123,7 +116,6 @@ impl ClientShellConfig {
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
             spaces: config.ui.sidebar.spaces.clone(),
             agents: config.ui.sidebar.agents.clone(),
-            agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
             toast_delivery: config.ui.toast.delivery,
@@ -350,7 +342,6 @@ impl ClientShellConfig {
                 self.hide_tab_bar_when_single_tab = ui.hide_tab_bar_when_single_tab;
                 self.spaces = ui.sidebar.spaces.clone();
                 self.agents = ui.sidebar.agents.clone();
-                self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
                 self.sound_enabled = ui.sound.enabled;
                 self.toast_delivery = ui.toast.delivery;
@@ -481,7 +472,6 @@ mod tests {
         let mut next = Config::default();
         next.ui.sidebar_width = 31;
         next.ui.tab_bar_position = TabBarPositionConfig::Bottom;
-        next.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         next.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
         next.ui.sidebar.agents = toml::from_str("rows = [[{ token = 'machine', rules = [{ equals = 'Local', bold = true }] }]]\nrow_gap = 2").unwrap();
         next.keys.prefix = crate::config::BindingConfig::one("ctrl+a");
@@ -491,10 +481,6 @@ mod tests {
         assert!(diagnostics.is_empty());
         assert_eq!(shell.sidebar_width, 31);
         assert_eq!(shell.tab_bar_position, TabBarPositionConfig::Bottom);
-        assert_eq!(
-            shell.agent_panel_sort,
-            crate::config::AgentPanelSortConfig::Priority
-        );
         assert_eq!(
             shell.status_indicators,
             crate::config::StatusIndicatorStyle::Symbols
