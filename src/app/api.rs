@@ -1759,6 +1759,40 @@ mod tests {
 
     #[tokio::test]
     async fn agent_explain_evaluates_with_server_manifest_cache() {
+        if std::env::var_os("HERDR_TEST_AGENT_EXPLAIN_CHILD").is_none() {
+            let root =
+                std::env::temp_dir().join(format!("herdr-agent-explain-{}", std::process::id()));
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "app::api::tests::agent_explain_evaluates_with_server_manifest_cache",
+                    "--nocapture",
+                ])
+                .env("HERDR_TEST_AGENT_EXPLAIN_CHILD", "1")
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("XDG_STATE_HOME", root.join("state"))
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_dir_all(root);
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let manifest = crate::config::config_dir()
+            .join("agent-detection")
+            .join("codex.toml");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(
+            manifest,
+            r#"
+id = "codex"
+[[rules]]
+id = "test-blocker"
+state = "blocked"
+contains = ["test-blocker-marker"]
+"#,
+        )
+        .unwrap();
+        crate::detect::manifest::reload_manifests();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1781,7 +1815,7 @@ mod tests {
         let runtime = crate::terminal::TerminalRuntime::test_with_screen_bytes(
             80,
             24,
-            b"press enter to confirm or esc to cancel",
+            b"test-blocker-marker",
         );
         app.terminal_runtimes.insert(terminal_id, runtime);
         let target = app.public_pane_id(0, pane_id).unwrap();
@@ -1798,7 +1832,7 @@ mod tests {
         assert_eq!(response["result"]["explain"]["state"], "blocked");
         assert_eq!(
             response["result"]["explain"]["matched_rule"]["id"],
-            "live_strong_blocker"
+            "test-blocker"
         );
     }
 

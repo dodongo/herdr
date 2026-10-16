@@ -2079,6 +2079,23 @@ mod tests {
 
     #[test]
     fn cli_user_dir_creation_seeds_legacy_config_before_printing_config_dir() {
+        if std::env::var_os("HERDR_TEST_PLUGIN_CONFIG_DIR_CHILD").is_none() {
+            let root = std::env::temp_dir().join(unique_plugin_id("config-dir-child"));
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cli::plugin::tests::cli_user_dir_creation_seeds_legacy_config_before_printing_config_dir",
+                    "--nocapture",
+                ])
+                .env("HERDR_TEST_PLUGIN_CONFIG_DIR_CHILD", "1")
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("XDG_STATE_HOME", root.join("state"))
+                .output()
+                .unwrap();
+            let _ = std::fs::remove_dir_all(root);
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
         let plugin_id = unique_plugin_id("legacy-config");
         let config_dir = crate::plugin_paths::plugin_config_dir(&plugin_id);
         let state_dir = crate::plugin_paths::plugin_state_dir(&plugin_id);
