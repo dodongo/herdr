@@ -74,6 +74,73 @@ fn state_with_remote() -> (ClientShellState, ClientEndpointId) {
 }
 
 #[test]
+fn plain_panes_are_endpoint_qualified_and_focusable_without_status_or_completion() {
+    let (mut state, remote) = state_with_remote();
+    for endpoint_id in [ClientEndpointId::Local, remote.clone()] {
+        let mut projected = snapshot();
+        projected.agents = vec![agent("parent", AgentStatus::Idle, 1)];
+        projected.panes.push(ClientShellPane {
+            pane_id: "plain".into(),
+            title: Some("build logs".into()),
+            focused: false,
+            tokens: vec![
+                ("p_presentation".into(), "pane".into()),
+                ("p_parent_pane".into(), "pane_1".into()),
+            ],
+            ..projected.panes[0].clone()
+        });
+        state.set_endpoint_snapshot(&endpoint_id, Box::new(projected));
+    }
+    let rows = aggregate_navigation::aggregate_agent_list_entries(
+        &state.endpoints,
+        &state.active_endpoint_id,
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| (
+                row.endpoint.endpoint_id.clone(),
+                row.entry.pane_id(),
+                row.depth
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (ClientEndpointId::Local, "pane_1", 0),
+            (ClientEndpointId::Local, "plain", 1),
+            (remote.clone(), "pane_1", 0),
+            (remote.clone(), "plain", 1),
+        ],
+    );
+    assert_eq!(
+        aggregate_navigation::online_agent_targets(&state.endpoints, &state.active_endpoint_id)
+            .len(),
+        4
+    );
+    state.compose(106, 30).unwrap();
+    let hit = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, endpoint, pane)| endpoint == &remote && pane == "plain")
+        .unwrap()
+        .0;
+    let focused = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: hit.x,
+        row: hit.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(focused.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::ActivateEndpoint {
+            endpoint_id,
+            target: Some(ClientEndpointFocusTarget::Pane(pane_id)),
+        } if endpoint_id == &remote && pane_id == "plain"
+    )));
+    assert!(state.pending_notifications.is_empty());
+    assert!(state.visible_notification.is_none());
+}
+
+#[test]
 fn workspace_navigation_waits_for_the_target_presentation_fence() {
     use crate::client::endpoint::{EndpointNegotiation, EndpointRegistry};
     use crate::client::endpoint_commands::EndpointCommands;

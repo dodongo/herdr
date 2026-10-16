@@ -46,6 +46,34 @@ pub(super) struct AggregateAgentRow<'a> {
     pub(super) depth: usize,
 }
 
+pub(super) struct AggregateAgentListEntry<'a> {
+    pub(super) endpoint: CachedEndpointSnapshot<'a>,
+    pub(super) entry: super::agent_sidebar::AgentListEntry<'a>,
+    pub(super) depth: usize,
+}
+
+pub(super) fn aggregate_agent_list_entries<'a>(
+    endpoints: &'a [ClientShellEndpoint],
+    active_endpoint_id: &ClientEndpointId,
+) -> Vec<AggregateAgentListEntry<'a>> {
+    let rows = aggregate_agent_rows(endpoints, active_endpoint_id);
+    rows.chunk_by(|left, right| left.endpoint.endpoint_index == right.endpoint.endpoint_index)
+        .flat_map(|rows| {
+            let endpoint = rows[0].endpoint;
+            super::agent_sidebar::agent_list_entries(
+                endpoint.snapshot,
+                rows.iter().map(|row| (row.agent, row.depth)).collect(),
+            )
+            .into_iter()
+            .map(move |(entry, depth)| AggregateAgentListEntry {
+                endpoint,
+                entry,
+                depth,
+            })
+        })
+        .collect()
+}
+
 pub(super) struct AggregateAgentTarget {
     pub(super) endpoint_id: ClientEndpointId,
     pub(super) pane_id: String,
@@ -242,12 +270,12 @@ pub(super) fn online_agent_targets(
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
 ) -> Vec<AggregateAgentTarget> {
-    aggregate_agent_rows(endpoints, active_endpoint_id)
+    aggregate_agent_list_entries(endpoints, active_endpoint_id)
         .into_iter()
         .filter(|row| !row.endpoint.stale())
         .map(|row| AggregateAgentTarget {
             endpoint_id: row.endpoint.endpoint_id.clone(),
-            pane_id: row.agent.pane_id.clone(),
+            pane_id: row.entry.pane_id().to_owned(),
         })
         .collect()
 }

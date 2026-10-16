@@ -610,7 +610,8 @@ fn mobile_items(
             });
         }
     }
-    let agents = super::aggregate_navigation::aggregate_agent_rows(endpoints, active_endpoint_id);
+    let agents =
+        super::aggregate_navigation::aggregate_agent_list_entries(endpoints, active_endpoint_id);
     let agent_view_label = snapshot.agent_view_label.as_deref();
     if !agents.is_empty() || agent_view_label.is_some() {
         let title = agent_view_label
@@ -632,7 +633,41 @@ fn mobile_items(
         }
         for row in agents {
             let endpoint = row.endpoint;
-            let agent = row.agent;
+            let agent = match row.entry {
+                super::agent_sidebar::AgentListEntry::Agent(agent) => agent,
+                super::agent_sidebar::AgentListEntry::Pane(pane) => {
+                    let background = if endpoint.endpoint_id == active_endpoint_id && pane.focused {
+                        palette.surface_dim
+                    } else {
+                        palette.panel_bg
+                    };
+                    items.push(MobileItem {
+                        lines: vec![Line::from(Span::styled(
+                            crate::ui::truncate_end(
+                                &format!(
+                                    "{}└{}",
+                                    " ".repeat(row.depth + 1),
+                                    super::agent_sidebar::pane_label(pane)
+                                ),
+                                usize::from(content_width),
+                            ),
+                            Style::default()
+                                .fg(if endpoint.stale() {
+                                    palette.overlay0
+                                } else {
+                                    palette.text
+                                })
+                                .bg(background),
+                        ))],
+                        background,
+                        target: Some(ClientMobileTarget::Agent {
+                            endpoint_id: endpoint.endpoint_id.clone(),
+                            pane_id: pane.pane_id.clone(),
+                        }),
+                    });
+                    continue;
+                }
+            };
             let workspace = endpoint
                 .snapshot
                 .workspaces

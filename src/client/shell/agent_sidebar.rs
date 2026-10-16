@@ -9,21 +9,83 @@ use ratatui::{
 };
 
 use super::*;
-use crate::protocol::ClientShellAgent;
+use crate::protocol::{ClientShellAgent, ClientShellPane};
 
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
-    pub(super) status: crate::api::schema::AgentStatus,
+    pub(super) status: Option<crate::api::schema::AgentStatus>,
     pub(super) focused: bool,
     pub(super) depth: usize,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
 
 pub(super) fn ordered_agent_pane_ids(snapshot: &ClientShellSnapshot) -> Vec<String> {
-    ordered_agents(snapshot)
+    agent_list_entries(snapshot, ordered_agents(snapshot))
         .into_iter()
-        .map(|(agent, _)| agent.pane_id.clone())
+        .map(|(entry, _)| entry.pane_id().to_owned())
         .collect()
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AgentListEntry<'a> {
+    Agent(&'a ClientShellAgent),
+    Pane(&'a ClientShellPane),
+}
+
+impl<'a> AgentListEntry<'a> {
+    pub(super) fn pane_id(self) -> &'a str {
+        match self {
+            Self::Agent(agent) => &agent.pane_id,
+            Self::Pane(pane) => &pane.pane_id,
+        }
+    }
+}
+
+pub(super) fn agent_list_entries<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    agents: Vec<(&'a ClientShellAgent, usize)>,
+) -> Vec<(AgentListEntry<'a>, usize)> {
+    let agent_ids = snapshot
+        .agents
+        .iter()
+        .map(|agent| agent.pane_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut panes_by_parent: HashMap<&str, Vec<&ClientShellPane>> = HashMap::new();
+    for pane in &snapshot.panes {
+        if agent_ids.contains(pane.pane_id.as_str())
+            || !pane.tokens.iter().any(|(key, value)| {
+                key == crate::metadata_tokens::PRESENTATION_TOKEN && value == "pane"
+            })
+        {
+            continue;
+        }
+        if let Some((_, parent)) = pane.tokens.iter().find(|(key, _)| key == "p_parent_pane") {
+            panes_by_parent.entry(parent).or_default().push(pane);
+        }
+    }
+    let mut entries = Vec::with_capacity(agents.len());
+    let mut pending = Vec::new();
+    for (agent, depth) in agents {
+        while pending
+            .last()
+            .is_some_and(|(_, parent_depth)| *parent_depth >= depth)
+        {
+            if let Some((pane, parent_depth)) = pending.pop() {
+                entries.push((AgentListEntry::Pane(pane), parent_depth + 1));
+            }
+        }
+        entries.push((AgentListEntry::Agent(agent), depth));
+        if let Some(panes) = panes_by_parent.remove(agent.pane_id.as_str()) {
+            pending.extend(panes.into_iter().rev().map(|pane| (pane, depth)));
+        }
+    }
+    entries.extend(
+        pending
+            .into_iter()
+            .rev()
+            .map(|(pane, depth)| (AgentListEntry::Pane(pane), depth + 1)),
+    );
+    entries
 }
 
 pub(super) fn ordered_agents(snapshot: &ClientShellSnapshot) -> Vec<(&ClientShellAgent, usize)> {
@@ -273,19 +335,44 @@ pub(super) fn agent_rows(
     config: &ClientShellConfig,
     machine: Option<&str>,
 ) -> Vec<AgentRow> {
-    ordered_agents(snapshot)
+    agent_list_entries(snapshot, ordered_agents(snapshot))
         .into_iter()
-        .filter_map(|(agent, depth)| agent_row(snapshot, agent, depth, config, machine))
+        .filter_map(|(entry, depth)| agent_row(snapshot, entry, depth, config, machine))
         .collect()
+}
+
+pub(super) fn pane_label(pane: &ClientShellPane) -> &str {
+    pane.tokens
+        .iter()
+        .find(|(key, _)| key == "p_name")
+        .map(|(_, value)| value.as_str())
+        .or(pane.title.as_deref())
+        .or(pane.label.as_deref())
+        .unwrap_or(&pane.pane_id)
 }
 
 pub(super) fn agent_row(
     snapshot: &ClientShellSnapshot,
-    agent: &ClientShellAgent,
+    entry: AgentListEntry<'_>,
     depth: usize,
     config: &ClientShellConfig,
     machine: Option<&str>,
 ) -> Option<AgentRow> {
+    let agent = match entry {
+        AgentListEntry::Agent(agent) => agent,
+        AgentListEntry::Pane(pane) => {
+            return Some(AgentRow {
+                pane_id: pane.pane_id.clone(),
+                status: None,
+                focused: pane.focused,
+                depth,
+                rows: vec![vec![crate::ui::ResolvedToken {
+                    kind: crate::ui::ResolvedTokenKind::Pane(pane_label(pane).to_owned()),
+                    style: Default::default(),
+                }]],
+            });
+        }
+    };
     let workspace = snapshot
         .workspaces
         .iter()
@@ -343,7 +430,7 @@ pub(super) fn agent_row(
     );
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
-        status: agent.agent_status,
+        status: Some(agent.agent_status),
         focused: agent.focused,
         depth,
         rows,
@@ -371,11 +458,14 @@ pub(super) fn render_agent_row(
             .fg(palette.subtext0)
             .add_modifier(Modifier::BOLD)
     };
-    let status_style = Style::default().fg(status_color(row.status, palette));
+    let status_style = Style::default().fg(row
+        .status
+        .map_or(palette.overlay0, |status| status_color(status, palette)));
     let secondary = Style::default().fg(palette.overlay0);
     let icon = (
-        status_icon(row.status, config.status_indicators),
-        Style::default().fg(status_color(row.status, palette)),
+        row.status
+            .map_or("", |status| status_icon(status, config.status_indicators)),
+        status_style,
     );
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {

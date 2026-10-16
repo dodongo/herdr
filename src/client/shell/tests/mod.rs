@@ -60,6 +60,8 @@ pub(super) fn snapshot() -> ClientShellSnapshot {
             foreground_cwd: Some("/repo".into()),
             focused: true,
             right_click_passthrough: false,
+            title: None,
+            tokens: Vec::new(),
         }],
         agents: Vec::new(),
         commands: Vec::new(),

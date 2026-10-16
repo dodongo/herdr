@@ -1064,6 +1064,10 @@ pub struct ClientShellPane {
     pub foreground_cwd: Option<String>,
     pub focused: bool,
     pub right_click_passthrough: bool,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tokens: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2850,6 +2854,8 @@ mod tests {
                 foreground_cwd: Some("/repo".into()),
                 focused: true,
                 right_click_passthrough: false,
+                title: None,
+                tokens: Vec::new(),
             }],
             agents: Vec::new(),
             commands: vec![ClientShellCommand {

@@ -141,20 +141,25 @@ pub(crate) fn render_collapsed_sidebar(
         .take(detail_content.height as usize)
         .enumerate()
     {
-        let Some(agent) = snapshot
+        let agent = snapshot
             .agents
             .iter()
-            .find(|agent| agent.pane_id == pane_id)
-        else {
-            continue;
-        };
+            .find(|agent| agent.pane_id == pane_id);
+        let focused = snapshot
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .map_or_else(
+                || agent.is_some_and(|agent| agent.focused),
+                |pane| pane.focused,
+            );
         let rect = Rect::new(
             detail_content.x,
             detail_content.y + index as u16,
             detail_content.width,
             1,
         );
-        if agent.focused {
+        if focused {
             buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
         }
         put_text(
@@ -163,7 +168,7 @@ pub(crate) fn render_collapsed_sidebar(
             rect.y,
             rect.width.min(2),
             &format!("{:<2}", index + 1),
-            Style::default().fg(if agent.focused {
+            Style::default().fg(if focused {
                 palette.text
             } else {
                 palette.overlay0
@@ -174,8 +179,12 @@ pub(crate) fn render_collapsed_sidebar(
             rect.x.saturating_add(2),
             rect.y,
             rect.width.saturating_sub(2),
-            status_icon(agent.agent_status, config.status_indicators),
-            Style::default().fg(status_color(agent.agent_status, palette)),
+            agent.map_or("", |agent| {
+                status_icon(agent.agent_status, config.status_indicators)
+            }),
+            Style::default().fg(agent.map_or(palette.subtext0, |agent| {
+                status_color(agent.agent_status, palette)
+            })),
         );
         hits.agents.push((rect, pane_id));
     }

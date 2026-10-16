@@ -141,7 +141,11 @@ pub(super) fn snapshot_with_completions(
                         .pane_state(pane_id)
                 })
                 .is_some_and(|pane| pane.right_click_passthrough);
+            let mut tokens = pane.tokens.into_iter().collect::<Vec<_>>();
+            tokens.sort_by(|left, right| left.0.cmp(&right.0));
             protocol::ClientShellPane {
+                title: pane.title.or(pane.terminal_title),
+                tokens,
                 pane_id,
                 workspace_id: pane.workspace_id,
                 tab_id: pane.tab_id,
@@ -721,6 +725,76 @@ mod tests {
             .terminal_runtimes
             .values()
             .all(|runtime| runtime.test_scroll_metrics_reads() == 1));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn snapshot_projects_plain_pane_metadata_without_agent_state_or_completions() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let mut workspace = crate::workspace::Workspace::test_new("panes");
+        workspace.test_add_tab(None);
+        let parent = workspace.tabs[0].root_pane;
+        let plain = workspace.tabs[1].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        let parent_id = app.public_pane_id(0, parent).unwrap();
+        let plain_id = app.public_pane_id(0, plain).unwrap();
+        let parent_terminal = app.state.workspaces[0].terminal_id(parent).unwrap().clone();
+        app.state
+            .terminals
+            .get_mut(&parent_terminal)
+            .unwrap()
+            .set_detected_state(
+                Some(crate::detect::Agent::Pi),
+                crate::detect::AgentState::Working,
+            );
+        let plain_terminal = app.state.workspaces[0].terminal_id(plain).unwrap().clone();
+        let terminal = app.state.terminals.get_mut(&plain_terminal).unwrap();
+        terminal.terminal_title = Some("shell title".into());
+        terminal.last_agent_completion_seq = Some(99);
+        terminal.metadata_tokens.patch(
+            std::collections::HashMap::from([
+                ("p_presentation".into(), Some("pane".into())),
+                ("p_parent_pane".into(), Some(parent_id.clone())),
+                ("p_name".into(), Some("build logs".into())),
+            ]),
+            None,
+            std::time::Instant::now(),
+        );
+        let (shell, completions) = snapshot_with_completions(&app, "boot", 1, None, None);
+        assert_eq!(shell.agents.len(), 1);
+        assert_eq!(shell.agents[0].pane_id, parent_id);
+        assert_eq!(shell.agent_order, std::slice::from_ref(&parent_id));
+        assert!(completions.completions.is_empty());
+        let pane = shell
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == plain_id)
+            .unwrap();
+        assert_eq!(pane.title.as_deref(), Some("shell title"));
+        assert_eq!(
+            pane.tokens,
+            [
+                ("p_name".into(), "build logs".into()),
+                ("p_parent_pane".into(), parent_id),
+                ("p_presentation".into(), "pane".into()),
+            ]
+        );
+        assert_eq!(
+            shell.tabs[1].agent_status,
+            crate::api::schema::AgentStatus::Unknown
+        );
+        assert_eq!(
+            shell.workspaces[0].agent_status,
+            crate::api::schema::AgentStatus::Working
+        );
     }
 
     #[test]

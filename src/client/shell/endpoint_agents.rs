@@ -23,13 +23,17 @@ pub(super) fn render_collapsed(
             rect.width,
             &format!(
                 "{initial}{}",
-                status_icon(row.agent.status, config.status_indicators)
+                row.agent
+                    .status
+                    .map_or("", |status| status_icon(status, config.status_indicators))
             ),
             Style::default()
                 .fg(if row.stale {
                     config.palette.overlay0
                 } else {
-                    status_color(row.agent.status, &config.palette)
+                    row.agent.status.map_or(config.palette.subtext0, |status| {
+                        status_color(status, &config.palette)
+                    })
                 })
                 .add_modifier(if row.stale {
                     Modifier::DIM
@@ -128,12 +132,12 @@ fn agent_rows(
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,
 ) -> Vec<EndpointAgentRow> {
-    super::aggregate_navigation::aggregate_agent_rows(endpoints, active_endpoint_id)
+    super::aggregate_navigation::aggregate_agent_list_entries(endpoints, active_endpoint_id)
         .into_iter()
         .filter_map(|row| {
             let mut agent = super::agent_sidebar::agent_row(
                 row.endpoint.snapshot,
-                row.agent,
+                row.entry,
                 row.depth,
                 config,
                 Some(row.endpoint.label),
