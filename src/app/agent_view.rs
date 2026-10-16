@@ -68,22 +68,7 @@ pub(crate) fn apply_agent_view(app: &AppState, entries: &mut Vec<AgentPanelEntry
         }
     }
 
-    if matches!(
-        app.agent_panel_sort,
-        crate::app::state::AgentPanelSort::Priority
-    ) {
-        entries.sort_by_key(|entry| {
-            (
-                std::cmp::Reverse(super::api_helpers::tab_attention_priority(
-                    entry.state,
-                    entry.seen,
-                )),
-                std::cmp::Reverse(entry.last_agent_state_change_seq),
-            )
-        });
-    } else {
-        group_subagents_below_parents(app, entries);
-    }
+    group_subagents_below_parents(app, entries);
 }
 
 fn group_subagents_below_parents(app: &AppState, entries: &mut Vec<AgentPanelEntry>) {
@@ -567,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn grouped_sort_places_stable_nested_subagents_below_their_parent() {
+    fn default_order_places_stable_nested_subagents_below_their_parent() {
         let (state, original) = lineage_state();
         let panes: Vec<_> = projected_entries(&state)
             .into_iter()
@@ -585,17 +570,6 @@ mod tests {
             original[7],
         ];
         assert_eq!(panes, expected);
-    }
-
-    #[test]
-    fn priority_sort_bypasses_parent_grouping() {
-        let (mut state, original) = lineage_state();
-        state.agent_panel_sort = crate::app::state::AgentPanelSort::Priority;
-        let panes: Vec<_> = projected_entries(&state)
-            .into_iter()
-            .map(|entry| entry.pane_id)
-            .collect();
-        assert_eq!(panes, original);
     }
 
     #[test]
