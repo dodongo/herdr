@@ -378,6 +378,90 @@ fn context_menus_capture_stable_targets_and_route_actions() {
 }
 
 #[test]
+fn agent_row_right_click_opens_its_tab_context_menu() {
+    let mut projected = snapshot();
+    projected.tabs.push(ClientShellTab {
+        tab_id: "tab_2".into(),
+        workspace_id: "ws_1".into(),
+        number: 2,
+        label: "main/9fg".into(),
+        custom_label: true,
+        zoomed: false,
+        focused: false,
+        agent_status: AgentStatus::Working,
+    });
+    let mut agent_pane = projected.panes[0].clone();
+    agent_pane.pane_id = "pane_2".into();
+    agent_pane.tab_id = "tab_2".into();
+    agent_pane.focused = false;
+    projected.panes.push(agent_pane);
+    projected.agents = vec![ClientShellAgent {
+        pane_id: "pane_2".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_2".into(),
+        name: Some("reviewer".into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    }];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state.compose(106, 30).expect("agent sidebar frame");
+
+    let row = state.hits.agents.first().expect("agent row hit").0;
+    let open = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: row.x + 1,
+        row: row.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(open.actions.is_empty());
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Tab { ref tab_id, .. },
+            ..
+        })) if tab_id == "tab_2"
+    ));
+    let items = match state.overlay.as_ref() {
+        Some(ClientShellOverlay::ContextMenu(menu)) => menu.items(),
+        _ => panic!("agent tab context menu"),
+    };
+    assert_eq!(
+        items.iter().map(|item| item.action).collect::<Vec<_>>(),
+        [
+            ClientContextMenuAction::NewTab,
+            ClientContextMenuAction::Rename,
+            ClientContextMenuAction::Close,
+        ]
+    );
+
+    state.compose(106, 30).expect("agent tab context menu");
+    let rename = state.hits.context_menu_rows[1].0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: rename.x + 1,
+        row: rename.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            target: ClientRenameTarget::Tab { ref tab_id, .. },
+            ..
+        })) if tab_id == "tab_2"
+    ));
+}
+
+#[test]
 fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

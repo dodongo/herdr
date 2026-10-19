@@ -1873,12 +1873,26 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
-                let tab_id = self
+                let agent_tab_id = self
                     .hits
-                    .tabs
+                    .agents
                     .iter()
                     .find(|(rect, _)| super::contains(*rect, point))
-                    .map(|(_, tab_id)| tab_id.clone());
+                    .and_then(|(_, pane_id)| {
+                        self.snapshot
+                            .as_deref()?
+                            .panes
+                            .iter()
+                            .find(|pane| &pane.pane_id == pane_id)
+                    })
+                    .map(|pane| pane.tab_id.clone());
+                let tab_id = agent_tab_id.or_else(|| {
+                    self.hits
+                        .tabs
+                        .iter()
+                        .find(|(rect, _)| super::contains(*rect, point))
+                        .map(|(_, tab_id)| tab_id.clone())
+                });
                 if let Some(tab_id) = tab_id {
                     self.open_tab_context_menu(tab_id, mouse.column, mouse.row);
                     outcome.repaint = true;
