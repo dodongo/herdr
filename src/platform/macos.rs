@@ -423,7 +423,7 @@ fn target_nofile_soft_limit(
 }
 
 pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
-    super::available_pane_shell_from_job(child_pid, foreground_job(child_pid)?)
+    super::available_pane_shell_from_job(foreground_job(child_pid)?)
 }
 
 /// Collect the foreground terminal job for a given child PID.

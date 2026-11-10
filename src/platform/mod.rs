@@ -481,17 +481,10 @@ mod fallback;
 pub use fallback::*;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) fn available_pane_shell_from_job(child_pid: u32, job: ForegroundJob) -> Option<String> {
-    if job.process_group_id != child_pid
-        || job.processes.iter().any(|process| process.pid != child_pid)
-    {
-        return None;
-    }
-    job.processes
-        .into_iter()
-        .find(|process| process.pid == child_pid)
-        .map(|process| process.name)
-        .filter(|name| is_pane_shell_process_name(name))
+pub(crate) fn available_pane_shell_from_job(job: ForegroundJob) -> Option<String> {
+    let [shell] = <[ForegroundProcess; 1]>::try_from(job.processes).ok()?;
+    (shell.pid == job.process_group_id && is_pane_shell_process_name(&shell.name))
+        .then_some(shell.name)
 }
 
 fn normalized_process_name(name: &str) -> String {
@@ -799,6 +792,39 @@ mod tests {
         for program in ["vim", "nvim", "cargo", "test-runner", "opencode"] {
             assert!(!is_pane_shell_process_name(program), "{program}");
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn available_pane_shell_is_a_lone_foreground_shell_leading_its_group() {
+        let process = |pid: u32, name: &str| ForegroundProcess {
+            pid,
+            name: name.into(),
+            argv0: None,
+            argv: None,
+            cmdline: None,
+        };
+        let job = |process_group_id: u32, processes: Vec<ForegroundProcess>| ForegroundJob {
+            process_group_id,
+            processes,
+        };
+        assert_eq!(
+            available_pane_shell_from_job(job(12, vec![process(12, "bash")])),
+            Some("bash".into())
+        );
+        assert_eq!(
+            available_pane_shell_from_job(job(12, vec![process(12, "bash"), process(13, "git")])),
+            None
+        );
+        assert_eq!(
+            available_pane_shell_from_job(job(12, vec![process(13, "bash")])),
+            None
+        );
+        assert_eq!(
+            available_pane_shell_from_job(job(12, vec![process(12, "vim")])),
+            None
+        );
+        assert_eq!(available_pane_shell_from_job(job(12, vec![])), None);
     }
 
     #[test]

@@ -343,7 +343,7 @@ fn shell_quote(value: &str) -> String {
 
 /// Collect the foreground terminal job for a given child PID.
 pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
-    super::available_pane_shell_from_job(child_pid, foreground_job(child_pid)?)
+    super::available_pane_shell_from_job(foreground_job(child_pid)?)
 }
 
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
