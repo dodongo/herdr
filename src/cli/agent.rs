@@ -663,17 +663,14 @@ fn pane_shell_is_initializing(pane_id: &str) -> std::io::Result<bool> {
 
 #[cfg(unix)]
 fn process_info_shows_shell_initialization(process_info: &serde_json::Value) -> bool {
-    let Some(shell_pid) = process_info["shell_pid"].as_u64() else {
+    let Some(group_leader) = process_info["foreground_process_group_id"].as_u64() else {
         return false;
     };
-    if process_info["foreground_process_group_id"].as_u64() != Some(shell_pid) {
-        return false;
-    }
     process_info["foreground_processes"]
         .as_array()
         .is_some_and(|processes| {
             processes.iter().any(|process| {
-                process["pid"].as_u64() == Some(shell_pid)
+                process["pid"].as_u64() == Some(group_leader)
                     && (process["name"]
                         .as_str()
                         .is_some_and(crate::platform::is_pane_shell_process_name)
@@ -956,4 +953,36 @@ fn parse_timeout(value: &str) -> Result<u64, i32> {
         eprintln!("{err}");
         2
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::process_info_shows_shell_initialization;
+
+    #[test]
+    fn shell_initialization_is_a_shell_leading_the_foreground_group_under_any_launcher() {
+        let info = |group: u64, processes: serde_json::Value| {
+            serde_json::json!({
+                "shell_pid": 10,
+                "foreground_process_group_id": group,
+                "foreground_processes": processes,
+            })
+        };
+        assert!(process_info_shows_shell_initialization(&info(
+            12,
+            serde_json::json!([{ "pid": 12, "name": "bash" }, { "pid": 13, "name": "mise" }]),
+        )));
+        assert!(process_info_shows_shell_initialization(&info(
+            12,
+            serde_json::json!([{ "pid": 12, "name": "login", "argv": ["-zsh"] }]),
+        )));
+        assert!(!process_info_shows_shell_initialization(&info(
+            12,
+            serde_json::json!([{ "pid": 12, "name": "vim" }]),
+        )));
+        assert!(!process_info_shows_shell_initialization(&info(
+            12,
+            serde_json::json!([{ "pid": 13, "name": "bash" }]),
+        )));
+    }
 }
